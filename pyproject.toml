@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orcauto"
+version = "1.0.0"
+description = "Cruza um orçamento analítico em PDF com as composições de custo de uma planilha Excel e gera versões automatizadas das abas de levantamento."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["openpyxl>=3.1", "pdfplumber>=0.11"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+orcauto = "orcauto.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = ["ignore::UserWarning"]

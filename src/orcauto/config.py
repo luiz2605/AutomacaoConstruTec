@@ -1,0 +1,127 @@
+# -*- coding: utf-8 -*-
+"""Configuração do projeto (TOML ou JSON).
+
+Tudo tem padrão utilizável; o arquivo de configuração só precisa declarar o que
+foge do padrão. Veja `config/` para exemplos comentados.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Any
+
+try:                                     # Python >= 3.11
+    import tomllib
+except ModuleNotFoundError:              # pragma: no cover
+    tomllib = None
+
+
+@dataclass
+class PdfConfig:
+    """Como ler o orçamento analítico em PDF.
+
+    O leitor padrão espera o layout `Ordem | Código | Descrição | Unidade |
+    Quantidade | Preço | Total`, com títulos de tópico no formato
+    `<número> <NOME EM MAIÚSCULAS> <valor>`.
+    """
+    topic_number_re: str = r"^\d+$"
+    item_order_re: str = r"^\d+(?:\.\d+)+$"
+    number_re: str = r"^[\d\.]+,\d+$"
+    topic_max_x: float = 120.0
+    continuation_min_x: float = 200.0
+    trailing_numbers: int = 3
+    header_words: tuple[str, ...] = ("Ordem", "Código", "Descrição", "Unidade")
+    line_tolerance: float = 2.5
+
+
+@dataclass
+class CompositionConfig:
+    """Onde e como ler as tabelas de composição de custo."""
+    sheets: list[str] = field(default_factory=list)   # vazio = detecta sozinho
+    title_re: str = r"^([A-Z0-9][A-Z0-9\.\-/]*?)\s+-\s+(.*)$"
+    section_keywords: tuple[str, ...] = (
+        "EQUIPAMENTO", "MAO DE OBRA", "MATERIAIS", "SERVICOS", "TRANSPORTE",
+    )
+    code_column: int = 1
+    description_column: int = 2
+    unit_column: int = 3
+    coefficient_column: int = 4
+    service_code_re: str = r"^C"          # insumo que casa vira sub-composição
+    max_depth: int = 3
+    min_tables_to_autodetect: int = 5
+
+
+@dataclass
+class TargetConfig:
+    """Abas de destino (as planilhas de levantamento)."""
+    suffix: str = " (AUTO)"
+    sheets: list[str] = field(default_factory=list)   # vazio = todas as mapeadas
+    topic_map: dict[str, str] = field(default_factory=dict)   # "3" -> "INFRAESTRUTURA"
+    min_topic_similarity: float = 0.60
+    header_keywords: tuple[str, ...] = ("ITEM", "CODIGO", "QUANT")
+    total_label: str = "TOTAL"
+
+
+@dataclass
+class RulesConfig:
+    """Regras de decisão da automação."""
+    # quantidade de linha cujo código já batia: "preservar" (padrão) ou "orcamento"
+    quantity_policy: str = "preservar"
+    # substituição de linha legada por item do orçamento
+    substitution_enabled: bool = True
+    substitution_min_similarity: float = 0.55
+    # {"ABA": {"12": "C3615"}} força; {"ABA": ["C0054"]} em `substitution_block` proíbe
+    substitution_force: dict[str, dict[str, str]] = field(default_factory=dict)
+    substitution_block: dict[str, list[str]] = field(default_factory=dict)
+    # {"ABA": {"10": "orcamento"}} força a origem da quantidade de uma linha
+    quantity_override: dict[str, dict[str, str]] = field(default_factory=dict)
+    # amplia o intervalo do TOTAL quando faltarem linhas livres dentro dele
+    extend_total_range: bool = True
+    write_log_sheet: bool = True
+    log_sheet_name: str = "LOG AUTO"
+
+
+@dataclass
+class Config:
+    pdf: PdfConfig = field(default_factory=PdfConfig)
+    compositions: CompositionConfig = field(default_factory=CompositionConfig)
+    targets: TargetConfig = field(default_factory=TargetConfig)
+    rules: RulesConfig = field(default_factory=RulesConfig)
+
+    @classmethod
+    def load(cls, path: str | Path | None) -> "Config":
+        if path is None:
+            return cls()
+        path = Path(path)
+        raw = path.read_bytes()
+        if path.suffix.lower() == ".json":
+            data = json.loads(raw.decode("utf-8"))
+        else:
+            if tomllib is None:                                  # pragma: no cover
+                raise RuntimeError("TOML exige Python 3.11+; use um arquivo .json")
+            data = tomllib.loads(raw.decode("utf-8"))
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Config":
+        def build(kind, key):
+            payload = dict(data.get(key) or {})
+            known = {f.name for f in kind.__dataclass_fields__.values()}
+            unknown = set(payload) - known
+            if unknown:
+                raise ValueError(f"[{key}] opção desconhecida: {', '.join(sorted(unknown))}")
+            for name, value in list(payload.items()):
+                current = kind.__dataclass_fields__[name]
+                if isinstance(current.default, tuple) and isinstance(value, list):
+                    payload[name] = tuple(value)
+            return kind(**payload)
+
+        unknown = set(data) - {"pdf", "compositions", "targets", "rules"}
+        if unknown:
+            raise ValueError(f"seção desconhecida na configuração: {', '.join(sorted(unknown))}")
+        return cls(build(PdfConfig, "pdf"), build(CompositionConfig, "compositions"),
+                   build(TargetConfig, "targets"), build(RulesConfig, "rules"))
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

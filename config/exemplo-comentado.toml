@@ -1,0 +1,45 @@
+# Todas as opções do orcauto, com os valores padrão.
+# Só é preciso declarar o que foge do padrão — um arquivo vazio já funciona.
+
+[pdf]
+# Leitura do orçamento analítico. O padrão espera o layout
+# "Ordem | Código | Descrição | Unidade | Quantidade | Preço | Total",
+# com títulos de tópico no formato "<número> <NOME EM MAIÚSCULAS> <valor>".
+topic_number_re = '^\d+$'          # o que identifica o número de um tópico
+item_order_re = '^\d+(?:\.\d+)+$'  # o que identifica a ordem de um item (3.2)
+number_re = '^[\d\.]+,\d+$'        # número no padrão brasileiro
+topic_max_x = 120.0                # x máximo do número do tópico, em pontos
+continuation_min_x = 200.0         # x mínimo de uma linha de continuação
+trailing_numbers = 3               # quantidade, preço e total
+line_tolerance = 2.5               # tolerância vertical para agrupar palavras
+
+[compositions]
+sheets = []                        # vazio = detecta as abas sozinho
+title_re = '^([A-Z0-9][A-Z0-9\.\-/]*?)\s+-\s+(.*)$'
+section_keywords = ["EQUIPAMENTO", "MAO DE OBRA", "MATERIAIS", "SERVICOS", "TRANSPORTE"]
+code_column = 1
+description_column = 2
+unit_column = 3
+coefficient_column = 4             # a coluna do coeficiente
+service_code_re = '^C'             # insumo que casa vira sub-composição
+max_depth = 3                      # níveis de aninhamento resolvidos
+min_tables_to_autodetect = 5
+
+[targets]
+suffix = " (AUTO)"
+sheets = []                        # vazio = todas as abas que casarem
+min_topic_similarity = 0.60
+header_keywords = ["ITEM", "CODIGO", "QUANT"]
+total_label = "TOTAL"
+# topic_map = { 3 = "INFRAESTRUTURA" }   # fixa o destino de um tópico
+
+[rules]
+quantity_policy = "preservar"      # "preservar" (a da aba) ou "orcamento"
+substitution_enabled = true
+substitution_min_similarity = 0.55
+extend_total_range = true          # amplia o TOTAL se faltar linha no intervalo
+write_log_sheet = true
+log_sheet_name = "LOG AUTO"
+# substitution_force = { PAREDES = { 12 = "C3615" } }   # força a substituição
+# substitution_block = { PAREDES = ["C3614"] }          # proíbe substituir
+# quantity_override  = { REVESTIMENTOS = { 10 = "orcamento" } }

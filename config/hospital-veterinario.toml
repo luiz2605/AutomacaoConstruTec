@@ -1,0 +1,30 @@
+# Configuração do projeto real: Hospital Veterinário Unicatólica Quixadá.
+#
+#   orcauto run --config config/hospital-veterinario.toml \
+#       --xlsx 03_25_06_26__LEVANTAMENTO.xlsx \
+#       --pdf  OrcamentoAnaliticoProposta.pdf \
+#       --out  "03_25_06_26__LEVANTAMENTO (AUTO).xlsx"
+
+[compositions]
+# A autodetecção também encontra "COMP.027", uma aba antiga com códigos
+# repetidos. Fixar as duas abas corretas evita depender da ordem de precedência.
+sheets = ["COMPOSIÇÃO TAB 28", "COMPOSIÇÃO PROPRIAS"]
+
+[targets]
+# Os tópicos 3, 5 e 14 casam sozinhos com INFRAESTRUTURA, PAREDES e
+# REVESTIMENTOS. Descomente para fixar o mapeamento, se preferir:
+# topic_map = { 3 = "INFRAESTRUTURA", 5 = "PAREDES", 14 = "REVESTIMENTOS" }
+
+[rules]
+# Regra geral: linha com código idêntico ao do orçamento mantém a quantidade
+# que já estava na aba.
+quantity_policy = "preservar"
+
+# Exceção justificada, REVESTIMENTOS linha 10 (C0776 - chapisco):
+# a quantidade da aba (5.444,67 m2) era "parede + teto" com a composição de
+# parede aplicada às duas áreas. O orçamento separa em 14.1 parede (4.264,14,
+# C0776) e 14.2 teto (1.161,10, C0778), que têm composições diferentes.
+# Mantida a quantidade original, o teto seria contado duas vezes: essa
+# quantidade era o próprio mecanismo da duplicidade.
+[rules.quantity_override]
+REVESTIMENTOS = { 10 = "orcamento" }
