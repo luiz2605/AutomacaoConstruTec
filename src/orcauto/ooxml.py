@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from .textutil import format_number
+
 WORKSHEET_CT = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 DRAWING_CT = "application/vnd.openxmlformats-officedocument.drawing+xml"
 WORKSHEET_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
@@ -124,6 +126,10 @@ class Workbook:
         self._new.append(sheet)
         return sheet
 
+    def pending(self) -> list[NewSheet]:
+        """Abas já criadas nesta sessão, ainda não gravadas."""
+        return list(self._new)
+
     def add_sheet(self, name: str, xml: str) -> NewSheet:
         """Acrescenta uma aba criada do zero (usada pelo relatório)."""
         self._counter += 1
@@ -208,8 +214,15 @@ def cell_xml(ref: str, style: str | None, *, number=None, text=None,
              formula=None, value=None) -> str:
     attribute = f' s="{style}"' if style else ""
     if formula is not None:
-        cached = "" if value is None else f"<v>{value!r}</v>"
-        return f'<c r="{ref}"{attribute}><f>{escape(formula)}</f>{cached}</c>'
+        # o valor em cache de uma fórmula precisa carregar o tipo: sem t="str",
+        # um resultado textual é lido como número e a pasta fica ilegível
+        cached, kind = "", ""
+        if value is not None:
+            if isinstance(value, str):
+                kind, cached = ' t="str"', f"<v>{escape(value)}</v>"
+            else:
+                cached = f"<v>{value!r}</v>"
+        return f'<c r="{ref}"{attribute}{kind}><f>{escape(formula)}</f>{cached}</c>'
     if number is not None:
         return f'<c r="{ref}"{attribute}><v>{number!r}</v></c>'
     if text is not None:
@@ -239,7 +252,7 @@ def ensure_row(xml: str, row: int, template_row: int | None = None) -> str:
         attributes = "".join(
             f' {name}="{value}"' for name, value in re.findall(r'\b(\w+(?::\w+)?)="([^"]*)"', head)
             if name not in ("r", "hidden"))
-        for found in re.finditer(r'<c r="([A-Z]+)\d+"(?:\s[^>]*)?(?:/>|>.*?</c>)', block, re.S):
+        for found in _any_cell_pattern().finditer(block):
             style = re.search(r'\bs="(\d+)"', found.group(0))
             cells += cell_xml(f"{found.group(1)}{row}", style.group(1) if style else None)
     element = f'<row r="{row}"{attributes}>{cells}</row>'
@@ -265,8 +278,21 @@ def _row_match(xml: str, row: int):
     return match
 
 
+# Atributos de uma célula. Precisa ser NÃO-guloso: `[^>]*` guloso consome
+# também a barra de uma célula auto-fechada (`<c r="D12" s="169"/>`), a
+# alternância cai em `>.*?</c>` e o casamento passa a engolir as células
+# seguintes até o próximo `</c>` — apagando-as na regravação.
+_ATTRS = r'[^>]*?'
+_CELL_BODY = r'(?:/>|>.*?</c>)'
+
+
 def _cell_pattern(ref: str) -> re.Pattern:
-    return re.compile(r'<c r="%s"(?:\s[^>]*)?(?:/>|>.*?</c>)' % ref, re.S)
+    return re.compile(r'<c r="%s"%s%s' % (ref, _ATTRS, _CELL_BODY), re.S)
+
+
+def _any_cell_pattern(row: int | None = None) -> re.Pattern:
+    suffix = str(row) if row is not None else r"\d+"
+    return re.compile(r'<c r="([A-Z]+)%s"%s%s' % (suffix, _ATTRS, _CELL_BODY), re.S)
 
 
 def cell_style(xml: str, row: int, column: str) -> str | None:
@@ -279,14 +305,25 @@ def cell_style(xml: str, row: int, column: str) -> str | None:
     return style.group(1) if style else None
 
 
-def set_cell(xml: str, row: int, column: str, create: bool = True, **kwargs) -> str:
-    """Grava uma célula preservando o formato que ela já tinha."""
+def set_cell(xml: str, row: int, column: str, create: bool = True,
+             style_from: str | None = None, force_style: bool = False, **kwargs) -> str:
+    """Grava uma célula preservando o formato que ela já tinha.
+
+    `style_from` nomeia uma coluna-modelo da mesma linha, usada quando a célula
+    alvo não tem formato próprio. Com `force_style`, o formato da coluna-modelo
+    vence mesmo que a célula já tenha um: é o caso de uma coluna acrescentada à
+    direita da tabela, onde o formato existente é o do lado de fora da tabela e
+    herdá-lo deixaria a coluna nova visualmente destacada do resto.
+    """
     if create:
         xml = ensure_row(xml, row)
     match = _row_match(xml, row)
     block = match.group(0)
     ref = f"{column}{row}"
-    replacement = cell_xml(ref, cell_style(xml, row, column), **kwargs)
+    style = cell_style(xml, row, column)
+    if style_from and (style is None or force_style):
+        style = cell_style(xml, row, style_from) or style
+    replacement = cell_xml(ref, style, **kwargs)
     pattern = _cell_pattern(ref)
     if pattern.search(block):
         block = pattern.sub(lambda _: replacement, block, count=1)
@@ -298,7 +335,7 @@ def set_cell(xml: str, row: int, column: str, create: bool = True, **kwargs) -> 
 def _insert_cell(block: str, column: str, replacement: str) -> str:
     from .textutil import column_index
     position = None
-    for found in re.finditer(r'<c r="([A-Z]+)\d+"(?:\s[^>]*)?(?:/>|>.*?</c>)', block, re.S):
+    for found in _any_cell_pattern().finditer(block):
         if column_index(found.group(1)) > column_index(column):
             position = found.start()
             break
@@ -337,9 +374,9 @@ def shift_formula(formula: str, column_delta: int, row_delta: int) -> str:
 def _shared_formulas(block: str, row: int) -> dict[str, tuple[str, str]]:
     """Mapa si -> (fórmula da mestre, coluna da mestre) dentro de uma linha."""
     masters: dict[str, tuple[str, str]] = {}
-    for cell in re.finditer(r'<c r="([A-Z]+)%d"(?:\s[^>]*)?>(.*?)</c>' % row, block, re.S):
+    for cell in _any_cell_pattern(row).finditer(block):
         found = re.search(r'<f\b(?=[^>]*t="shared")(?=[^>]*\bref=")[^>]*si="(\d+)"[^>]*>(.+?)</f>',
-                          cell.group(2), re.S)
+                          cell.group(0), re.S)
         if found:
             masters[found.group(1)] = (_unescape(found.group(2)), cell.group(1))
     return masters
@@ -385,3 +422,119 @@ def retarget_sumproduct(xml: str, row: int, old_last: int, new_last: int,
 def _unescape(text: str) -> str:
     return (text.replace("&lt;", "<").replace("&gt;", ">")
                 .replace("&quot;", '"').replace("&apos;", "'").replace("&amp;", "&"))
+
+
+# ------------------------------------------------------- geração de estrutura
+def total_formula(column: str, quantity_column: str, first_row: int, last_row: int,
+                  bag_size: float | None = None) -> str:
+    """Fórmula de TOTAL de uma coluna de insumo, escrita do zero.
+
+    `retarget_sumproduct` só sabe ajustar um intervalo já existente; aqui a
+    fórmula nasce completa, o que é o que uma aba sintetizada precisa.
+    Com `bag_size`, aplica a conversão de quantidade para embalagem
+    (o caso do cimento: cotado em KG, comprado em saco de 50 kg).
+    """
+    body = (f"SUMPRODUCT(${quantity_column}${first_row}:${quantity_column}${last_row},"
+            f"{column}{first_row}:{column}{last_row})")
+    if bag_size:
+        return f"ROUNDUP(({body}/{format_number(bag_size)}),0)"
+    return body
+
+
+def unit_lookup_formula(column: str, code_row: int, lookup_range: str) -> str:
+    """VLOOKUP de unidade, no mesmo formato que o molde já usa na linha 9."""
+    return f'IFERROR(VLOOKUP({column}{code_row},{lookup_range},3,FALSE),"")'
+
+
+def set_dimension(xml: str, last_column: str, last_row: int) -> str:
+    """Amplia `<dimension>` para cobrir a extensão realmente usada.
+
+    Nada mais no módulo mexe nisso porque, no caminho de preenchimento, o
+    número de colunas é fixo. Numa aba sintetizada ele é dinâmico, e uma
+    dimensão menor que o conteúdo é o tipo de inconsistência que faz o Excel
+    pedir reparo ao abrir.
+    """
+    from .textutil import column_index, column_letter
+
+    found = re.search(r'<dimension ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"', xml)
+    if not found:
+        return xml.replace("<sheetData",
+                           f'<dimension ref="A1:{last_column}{last_row}"/><sheetData', 1)
+    end_column = column_letter(max(column_index(found.group(3)), column_index(last_column)))
+    end_row = max(int(found.group(4)), last_row)
+    return xml[:found.start()] + \
+        f'<dimension ref="{found.group(1)}{found.group(2)}:{end_column}{end_row}"' + \
+        xml[found.end():]
+
+
+def set_column_width(xml: str, column: str, width: float | None = None,
+                     style: str | None = None, template: str | None = None) -> str:
+    """Dá largura própria a uma coluna, dividindo o intervalo que a contém.
+
+    As definições `<col>` de uma pasta cobrem faixas contíguas (o molde real
+    tem 3673 delas, até XFD). Acrescentar uma entrada sobreposta produz um
+    arquivo que o Excel considera inválido, então a faixa é partida em até três
+    pedaços e só o pedaço da coluna alvo recebe os novos atributos.
+    """
+    from .textutil import column_index
+
+    target = column_index(column)
+    block = re.search(r"<cols>.*?</cols>", xml, re.S)
+    if template is not None and (width is None or style is None):
+        source = _column_definition(xml, column_index(template))
+        if source is not None:
+            width = width if width is not None else source[0]
+            style = style if style is not None else source[1]
+    attributes = f' width="{width}" customWidth="1"' if width is not None else ""
+    attributes += f' style="{style}"' if style else ""
+    element = f'<col min="{target}" max="{target}"{attributes}/>'
+
+    if not block:
+        return xml.replace("<sheetData", f"<cols>{element}</cols><sheetData", 1)
+
+    pieces = []
+    replaced = False
+    for found in re.finditer(r"<col\b[^>]*/>", block.group(0)):
+        low = int(re.search(r'min="(\d+)"', found.group(0)).group(1))
+        high = int(re.search(r'max="(\d+)"', found.group(0)).group(1))
+        if not (low <= target <= high):
+            pieces.append(found.group(0))
+            continue
+        replaced = True
+        if low < target:
+            pieces.append(re.sub(r'max="\d+"', f'max="{target - 1}"', found.group(0), count=1))
+        pieces.append(element)
+        if high > target:
+            pieces.append(re.sub(r'min="\d+"', f'min="{target + 1}"', found.group(0), count=1))
+    if not replaced:
+        pieces.append(element)
+    return xml[:block.start()] + "<cols>" + "".join(pieces) + "</cols>" + xml[block.end():]
+
+
+def _column_definition(xml: str, index: int) -> tuple[float | None, str | None] | None:
+    block = re.search(r"<cols>.*?</cols>", xml, re.S)
+    if not block:
+        return None
+    for found in re.finditer(r"<col\b[^>]*/>", block.group(0)):
+        low = int(re.search(r'min="(\d+)"', found.group(0)).group(1))
+        high = int(re.search(r'max="(\d+)"', found.group(0)).group(1))
+        if low <= index <= high:
+            width = re.search(r'width="([\d.]+)"', found.group(0))
+            style = re.search(r'style="(\d+)"', found.group(0))
+            return (float(width.group(1)) if width else None,
+                    style.group(1) if style else None)
+    return None
+
+
+def clear_row(xml: str, row: int, columns: list[str]) -> str:
+    """Esvazia as células de uma linha preservando o formato de cada uma.
+
+    Linha ausente é no-op: não há nada a limpar, e criá-la só para esvaziar
+    deixaria lixo no arquivo.
+    """
+    if not has_row(xml, row):
+        return xml
+    for column in columns:
+        if _cell_pattern(f"{column}{row}").search(_row_match(xml, row).group(0)):
+            xml = set_cell(xml, row, column)
+    return xml

@@ -72,3 +72,40 @@ def column_index(letter: str) -> int:
             raise ValueError(f"coluna inválida: {letter!r}")
         value = value * 26 + (ord(char) - 64)
     return value
+
+
+# Caracteres que o Excel proíbe em nome de aba, e o limite de 31 caracteres.
+FORBIDDEN_SHEET_CHARS = r":\/?*[]"
+SHEET_NAME_LIMIT = 31
+
+
+def sanitize_sheet_name(name: str, taken: set[str] | None = None,
+                        limit: int = SHEET_NAME_LIMIT) -> str:
+    """Transforma o nome de um tópico do orçamento em nome de aba válido.
+
+    O Excel recusa `: \\ / ? * [ ]`, recusa nome com mais de 31 caracteres e
+    recusa nome começando ou terminando com apóstrofo. Os nomes vêm de extração
+    de PDF, então também chegam com espaço duplo e acentuação irregular
+    (`CAIXA D´ÁGUA`). O corte respeita a fronteira de palavra sempre que sobrar
+    nome legível, e a colisão é resolvida com sufixo numérico.
+    """
+    taken = taken or set()
+    cleaned = "".join(" " if c in FORBIDDEN_SHEET_CHARS else c for c in str(name))
+    cleaned = _SPACES.sub(" ", cleaned).strip().strip("'").strip()
+    if not cleaned:
+        cleaned = "ABA"
+
+    if len(cleaned) > limit:
+        cut = cleaned[:limit]
+        space = cut.rfind(" ")
+        # só corta na palavra se ainda sobrar nome reconhecível
+        cleaned = cut[:space].rstrip() if space >= limit * 0.6 else cut.rstrip()
+
+    if cleaned not in taken:
+        return cleaned
+    for suffix in range(2, 1000):
+        tail = f" {suffix}"
+        candidate = cleaned[:limit - len(tail)].rstrip() + tail
+        if candidate not in taken:
+            return candidate
+    raise ValueError(f"não foi possível gerar nome de aba único para {name!r}")

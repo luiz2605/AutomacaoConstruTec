@@ -49,6 +49,15 @@ class CompositionConfig:
     coefficient_column: int = 4
     service_code_re: str = r"^C"          # insumo que casa vira sub-composição
     max_depth: int = 3
+    # insumos cotados em KG mas comprados em saco: o TOTAL da coluna recebe
+    # ROUNDUP(.../tamanho do saco). Não dá para inferir só pela unidade — a
+    # Tabela SEINFRA não diz o que é ensacado —, então é lista explícita.
+    bag_rounding_inputs: tuple[str, ...] = ("I0805",)   # I0805 = CIMENTO PORTLAND
+    bag_size: float = 50.0
+    # seções de composição que viram coluna numa aba gerada. Vazio = todas.
+    # Numa "RELAÇÃO DE MATERIAIS", ("MATERIAIS",) deixa de fora mão de obra e
+    # equipamento — no orçamento real isso é 34% das colunas.
+    column_sections: tuple[str, ...] = ()
     min_tables_to_autodetect: int = 5
 
 
@@ -61,6 +70,11 @@ class TargetConfig:
     min_topic_similarity: float = 0.60
     header_keywords: tuple[str, ...] = ("ITEM", "CODIGO", "QUANT")
     total_label: str = "TOTAL"
+    # aba-molde usada para sintetizar uma aba que ainda não existe
+    template_sheet: str = "MODELO BASE"
+    generate_missing: bool = True
+    # faixa consultada pelo VLOOKUP de unidade no cabeçalho das colunas novas
+    insumos_lookup_range: str = "insumos!$A$6:$D$8635"
 
 
 @dataclass
@@ -78,6 +92,9 @@ class RulesConfig:
     quantity_override: dict[str, dict[str, str]] = field(default_factory=dict)
     # amplia o intervalo do TOTAL quando faltarem linhas livres dentro dele
     extend_total_range: bool = True
+    # em linha ATUALIZADA, preenche unidade/descrição que estejam vazias ou em
+    # erro (#REF!), sem jamais sobrescrever conteúdo aproveitável
+    fill_empty_identity: bool = True
     write_log_sheet: bool = True
     log_sheet_name: str = "LOG AUTO"
 

@@ -105,3 +105,37 @@ def topics() -> list[Topic]:
         item("5.4", "S999", "SERVICO SEM COMPOSICAO", "M2", 5.0),
     ])
     return [topic]
+
+
+@pytest.fixture
+def template_workbook_path(tmp_path: Path) -> Path:
+    """Pasta com as composições e APENAS a aba-molde — nenhuma aba de destino.
+
+    Reproduz a situação do arquivo-base real: `MODELO BASE` traz o desenho da
+    tabela (cabeçalho de três linhas, bloco de serviços, linha de TOTAL) mas
+    nenhum insumo declarado, e por isso não passa em `layout.detect`.
+    """
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    compositions = workbook.active
+    compositions.title = "COMPOSICOES"
+    for number, values in COMPOSITION_ROWS.items():
+        for offset, value in enumerate(values, start=1):
+            if value is not None:
+                compositions.cell(number, offset, value)
+
+    template = workbook.create_sheet("MODELO BASE")
+    template["A1"] = "RELACAO DE MATERIAIS"
+    for column, header in zip("ABCDE", ["ITEM", "CODIGO", "SERVICOS", "UN", "QUANT."]):
+        template[f"{column}8"] = header
+    # duas colunas de insumo já desenhadas; o resto terá de ser acrescentado
+    for column in ("F", "G"):
+        template[f"{column}9"] = f'=IFERROR(VLOOKUP({column}7,insumos!$A$6:$D$99,3,FALSE),"")'
+    template["A14"] = "TOTAL"
+    template["F14"] = "=SUMPRODUCT($E$10:$E$12,F10:F12)"
+    template["G14"] = "=ROUNDUP((SUMPRODUCT($E$10:$E$12,G10:G12)/50),0)"
+
+    path = tmp_path / "base.xlsx"
+    workbook.save(path)
+    return path

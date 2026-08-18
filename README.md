@@ -117,6 +117,7 @@ src/orcauto/
   resolver.py       coeficiente de um insumo, inclusive aninhado
   layout.py         detecção automática do layout da aba de destino
   planner.py        decisão de ATUALIZADA / SUBSTITUI / NOVA
+  synth.py          síntese de aba nova a partir do molde
   ooxml.py          cirurgia no pacote .xlsx
   report.py         relatório de terminal e aba LOG
   pipeline.py       orquestração

@@ -119,3 +119,50 @@ def test_topic_sheet_score_nao_casa_por_substring():
 def test_match_topics_respeita_o_mapa_explicito(topics):
     config = Config(targets=TargetConfig(topic_map={"5": "REVESTIMENTO"}))
     assert match_topics(topics, ["REVESTIMENTO", "OUTRA"], config) == [(topics[0], "REVESTIMENTO")]
+
+
+def test_preenche_unidade_vazia_em_linha_atualizada(workbook_path, topics, config, tmp_path):
+    """A planilha real tem VLOOKUP quebrado (#REF!) na coluna de unidade.
+
+    Numa linha ATUALIZADA a automação não reescreve a identidade, então a
+    unidade ficava vazia. Passa a preencher — só quando não há nada útil lá.
+    """
+    # linha 10 é ATUALIZADA (mesmo código do item 5.1)
+    workbook = openpyxl.load_workbook(workbook_path)
+    workbook["REVESTIMENTO"]["D10"] = None
+    workbook.save(workbook_path)
+    run(workbook_path, None, tmp_path / "vazia.xlsx", config, topics=topics)
+    vazia = openpyxl.load_workbook(tmp_path / "vazia.xlsx")["REVESTIMENTO (AUTO)"]
+    assert vazia["D10"].value == "M2"             # estava vazia: preenchida
+
+    workbook = openpyxl.load_workbook(workbook_path)
+    workbook["REVESTIMENTO"]["D10"] = "UN-MANUAL"
+    workbook.save(workbook_path)
+    run(workbook_path, None, tmp_path / "cheia.xlsx", config, topics=topics)
+    cheia = openpyxl.load_workbook(tmp_path / "cheia.xlsx")["REVESTIMENTO (AUTO)"]
+    assert cheia["D10"].value == "UN-MANUAL"      # tinha conteúdo: intocada
+
+
+def test_erro_ref_conta_como_celula_vazia(workbook_path, topics, config, tmp_path):
+    """`#REF!` não é conteúdo aproveitável — pode ser substituído."""
+    from orcauto.layout import is_empty
+    assert is_empty("#REF!") and is_empty("") and is_empty(None)
+    assert not is_empty("M2") and not is_empty(0)
+
+
+def test_log_lista_linhas_sem_contrapartida_no_orcamento(workbook_path, topics, config, tmp_path):
+    """A linha legada que sobra precisa aparecer, não ficar invisível."""
+    workbook = openpyxl.load_workbook(workbook_path)
+    workbook["REVESTIMENTO"]["B12"] = "S777"
+    workbook["REVESTIMENTO"]["C12"] = "SERVICO ANTIGO SEM RELACAO"
+    workbook["REVESTIMENTO"]["E12"] = 50
+    workbook.save(workbook_path)
+
+    destination = tmp_path / "legado.xlsx"
+    run(workbook_path, None, destination, config, topics=topics)
+    linhas = ["|".join(str(c) for c in row if c not in (None, ""))
+              for row in openpyxl.load_workbook(destination)["LOG AUTO"].iter_rows(values_only=True)]
+    texto = "\n".join(linhas)
+    assert "5) LINHAS DA ABA SEM CONTRAPARTIDA NO ORCAMENTO" in texto
+    assert "S777" in texto
+    assert "nao consta em nenhum item do orcamento" in texto

@@ -19,11 +19,28 @@ _SUMPRODUCT = re.compile(
     re.IGNORECASE)
 
 
+ERROR_VALUES = ("#REF!", "#N/A", "#VALUE!", "#NAME?", "#DIV/0!", "#NULL!", "#NUM!")
+
+
+def is_empty(value) -> bool:
+    """Célula sem conteúdo aproveitável: vazia, ou exibindo um erro do Excel.
+
+    A planilha original tem VLOOKUPs apontando para `#REF!`, que o Excel
+    resolve como texto vazio ou erro. Uma célula assim não carrega informação
+    e pode ser preenchida sem destruir nada do trabalho do orçamentista.
+    """
+    if value is None:
+        return True
+    text = str(value).strip()
+    return not text or text in ERROR_VALUES
+
+
 @dataclass
 class ServiceRow:
     row: int
     code: str | None
     description: str | None
+    unit: str | None
     quantity: float | None
     filled_columns: set[str] = field(default_factory=set)
 
@@ -66,8 +83,58 @@ class SheetLayout:
         return list(range(self.first_row, self.last_row + 1))
 
 
+@dataclass
+class TemplateLayout:
+    """Âncoras de uma aba-molde, que ainda não tem nenhum insumo declarado."""
+    sheet: str
+    header_row: int
+    input_row: int
+    quantity_column: str
+    order_column: str
+    code_column: str
+    description_column: str
+    unit_column: str
+    first_row: int
+    last_row: int
+    total_row: int
+    slots: list[str]        # colunas de insumo já formatadas no molde
+
+
 class LayoutError(RuntimeError):
     pass
+
+
+def detect_template(formula_ws, value_ws, config: TargetConfig | None = None) -> TemplateLayout:
+    """Lê as âncoras de uma aba-molde.
+
+    `detect` exige ao menos um insumo declarado na linha de códigos, e o molde
+    por definição não tem nenhum. Aqui as colunas de insumo disponíveis são
+    deduzidas da própria linha de TOTAL: cada coluna que já traz um SUMPRODUCT
+    é um lugar formatado esperando um insumo. É a leitura mais fiel à intenção
+    de quem desenhou o molde, e não depende de adivinhar estilo.
+    """
+    config = config or TargetConfig()
+    total_row = _find_total_row(value_ws, config)
+    quantity_column, first_row, last_row = _read_total_range(formula_ws, total_row)
+    header_row = _find_header_row(value_ws, total_row, config)
+    quantity_index = column_index(quantity_column)
+
+    slots = []
+    for index in range(quantity_index + 1, formula_ws.max_column + 1):
+        value = formula_ws.cell(total_row, index).value
+        if isinstance(value, str) and "SUMPRODUCT" in value.upper():
+            slots.append(column_letter(index))
+    if not slots:
+        raise LayoutError(f"[{formula_ws.title}] o molde não tem nenhuma coluna de insumo "
+                          f"com SUMPRODUCT na linha {total_row}")
+    return TemplateLayout(
+        sheet=formula_ws.title, header_row=header_row, input_row=header_row - 1,
+        quantity_column=quantity_column,
+        order_column=column_letter(max(1, quantity_index - 4)),
+        code_column=column_letter(max(1, quantity_index - 3)),
+        description_column=column_letter(max(1, quantity_index - 2)),
+        unit_column=column_letter(max(1, quantity_index - 1)),
+        first_row=first_row, last_row=last_row, total_row=total_row, slots=slots)
 
 
 def detect(formula_ws, value_ws, config: TargetConfig | None = None) -> SheetLayout:
@@ -140,10 +207,12 @@ def _read_row(formula_ws, value_ws, layout: SheetLayout, row: int) -> ServiceRow
     code = value_ws[f"{layout.code_column}{row}"].value
     quantity = value_ws[f"{layout.quantity_column}{row}"].value
     description = value_ws[f"{layout.description_column}{row}"].value
+    unit = value_ws[f"{layout.unit_column}{row}"].value
     return ServiceRow(
         row=row,
         code=str(code).strip() if isinstance(code, str) and str(code).strip() else None,
         description=str(description).strip() if isinstance(description, str) else None,
+        unit=None if is_empty(unit) else str(unit).strip(),
         quantity=quantity if isinstance(quantity, (int, float)) and not isinstance(quantity, bool) else None,
         filled_columns=filled,
     )

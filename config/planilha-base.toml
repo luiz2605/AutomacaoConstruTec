@@ -1,0 +1,18 @@
+# Arquivo-base sem nenhuma aba de levantamento pronta — só o `MODELO BASE`.
+# Toda aba é sintetizada a partir do molde, uma por tópico do orçamento.
+#
+#   orcauto run --config config/planilha-base.toml \
+#       --xlsx "03_25.06.26__PLANILHA_BASE.xlsx" \
+#       --pdf  OrcamentoAnaliticoProposta.pdf \
+#       --out  "LEVANTAMENTO (AUTO).xlsx"
+
+[compositions]
+sheets = ["COMPOSIÇÃO TAB 28", "COMPOSIÇÃO PROPRIAS"]
+
+# Sem filtro, o tópico INFRAESTRUTURA gera 36 colunas — 17 delas de mão de obra
+# e equipamento, numa aba chamada "RELAÇÃO DE MATERIAIS". Descomente para
+# levantar só material:
+# column_sections = ["MATERIAIS"]
+
+[targets]
+template_sheet = "MODELO BASE"

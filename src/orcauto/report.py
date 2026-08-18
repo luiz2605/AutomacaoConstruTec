@@ -8,13 +8,15 @@ from .ooxml import cell_xml
 from .planner import NEW, SUBSTITUTED, UPDATED, SheetPlan
 from .textutil import column_letter
 
-HEADINGS = ("1)", "2)", "3)", "4)", "LEVANTAMENTO")
+HEADINGS = ("1)", "2)", "3)", "4)", "5)", "6)", "LEVANTAMENTO")
 
 
 @dataclass
 class Audit:
     plans: list[SheetPlan] = field(default_factory=list)
     suffix: str = " (AUTO)"
+    budget_codes: set[str] = field(default_factory=set)
+    synth: list = field(default_factory=list)
 
     def written_rows(self):
         for plan in self.plans:
@@ -95,6 +97,51 @@ def build_rows(audit: Audit) -> list[list]:
         rows.append([plan.sheet + audit.suffix, planned.row, planned.item.code,
                      round(existing, 4), planned.item.quantity,
                      round(existing - planned.item.quantity, 4), treatment])
+    rows += [[], ["6) ABAS GERADAS A PARTIR DO MOLDE"],
+             ["Topicos do orcamento que nao tinham aba de destino. A aba foi sintetizada a partir do "
+              "molde, com uma coluna por insumo-folha realmente consumido pelos itens do topico."],
+             ["ABA GERADA", "TOPICO", "NOME DO TOPICO", "ITENS", "LINHAS", "COLUNAS",
+              "ALEM DO MOLDE", "LINHA DO TOTAL", "COLUNA", "INSUMO", "DESCRICAO", "UN",
+              "SECAO", "OBSERVACAO"]]
+    for plan in audit.synth:
+        if not plan.created:
+            rows.append([plan.sheet, plan.topic_number, plan.topic_name,
+                         len(plan.rows) + len(plan.skipped), 0, 0, 0, "",
+                         "", "", "ABA NAO CRIADA: " + plan.reason, "", "", ""])
+            continue
+        base = [plan.sheet, plan.topic_number, plan.topic_name,
+                len(plan.rows) + len(plan.skipped), len(plan.rows), len(plan.columns),
+                len(plan.appended), plan.total_row]
+        for letter, column in plan.columns:
+            nota = ("codigo de servico sem composicao no arquivo: nao foi possivel abrir "
+                    "nos insumos dele" if column.unresolved_service else "")
+            rows.append(base + [letter, column.code, column.description, column.unit or "",
+                                column.section or "", nota])
+        for skipped in plan.skipped:
+            rows.append([plan.sheet, plan.topic_number, plan.topic_name, "", "", "", "", "",
+                         "", skipped.item.code, "NAO APLICADO: " + skipped.reason, ""])
+
+    rows += [[], ["5) LINHAS DA ABA SEM CONTRAPARTIDA NO ORCAMENTO (nao foram tocadas)"],
+             ["Estas linhas ja existiam na aba original e continuam somando no TOTAL, mas o codigo delas "
+              "nao corresponde a nenhum item do topico. A automacao nao as altera; confira se ainda valem."],
+             ["ABA (AUTO)", "LINHA", "CODIGO", "DESCRICAO", "QUANT.", "SITUACAO"]]
+    for plan in audit.plans:
+        escritas = set(plan.rows)
+        for row in plan.layout.rows_inside_total():
+            service = plan.layout.rows[row]
+            if row in escritas or service.is_blank:
+                continue
+            if service.code and service.code in audit.budget_codes:
+                situacao = "codigo existe no orcamento, mas em outro topico"
+            elif service.code:
+                situacao = "codigo nao consta em nenhum item do orcamento"
+            else:
+                situacao = "linha sem codigo de servico (lancamento manual)"
+            if service.quantity is None and (service.description or "").strip():
+                situacao += "; quantidade vazia ou em erro"
+            rows.append([plan.sheet + audit.suffix, row, service.code or "",
+                         service.description or "", service.quantity, situacao])
+
     return rows
 
 
@@ -130,6 +177,20 @@ def log_sheet_xml(rows: list[list], bold_style: int, wrap_style: int) -> str:
 def text_report(audit: Audit) -> str:
     """Resumo legível para o terminal."""
     lines: list[str] = []
+    for plan in audit.synth:
+        if not plan.created:
+            lines.append(f"[aba nao criada] topico {plan.topic_number} {plan.topic_name}: {plan.reason}")
+            lines.append("")
+            continue
+        title = f"{plan.sheet}  (aba gerada do molde)  <-  topico {plan.topic_number} {plan.topic_name}"
+        lines += ["=" * len(title), title, "=" * len(title)]
+        lines.append(f"  {len(plan.rows)} linhas, {len(plan.columns)} colunas de insumo "
+                     f"({len(plan.appended)} alem do molde), TOTAL na linha {plan.total_row}")
+        lines.append("  colunas: " + ", ".join(f"{letra}={col.code}" for letra, col in plan.columns))
+        for skipped in plan.skipped:
+            lines.append(f"  -- nao aplicado  item {skipped.item.order:>6} "
+                         f"{skipped.item.code:<9} {skipped.reason}")
+        lines.append("")
     for plan in audit.plans:
         title = f"{plan.sheet}{audit.suffix}  <-  topico {plan.topic_number} {plan.topic_name}"
         lines.append("=" * len(title))

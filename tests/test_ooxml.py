@@ -136,3 +136,51 @@ def test_ensure_row_no_fim_da_aba():
 def test_set_cell_cria_a_linha_quando_necessario():
     xml = '<worksheet><sheetData><row r="3"><c r="A3"/></row></sheetData></worksheet>'
     assert "<v>5</v>" in set_cell(xml, 8, "B", number=5)
+
+
+def test_gravar_celula_autofechada_nao_engole_a_seguinte():
+    """Regressão: `<c r="D12" s="169"/>` seguida de `<c r="E12" s="541">…</c>`.
+
+    Com o padrão guloso antigo, escrever D12 casava também a E12 e a
+    substituía junto — a célula seguinte era apagada e, ao ser regravada
+    depois, nascia sem estilo. Foi a causa do erro de formatação em Paredes.
+    """
+    xml = ('<worksheet><sheetData><row r="12">'
+           '<c r="D12" s="169"/>'
+           '<c r="E12" s="541"><v>38.96</v></c>'
+           '<c r="F12" s="166"/>'
+           '<c r="G12" s="166"><f>A1</f><v>9.1</v></c>'
+           '</row></sheetData></worksheet>')
+    updated = set_cell(xml, 12, "D", text="M2")
+    assert '<c r="E12" s="541"><v>38.96</v></c>' in updated      # intacta
+    assert cell_style(updated, 12, "E") == "541"
+
+    updated = set_cell(updated, 12, "F")                          # limpa a auto-fechada
+    assert cell_style(updated, 12, "G") == "166"                  # vizinha preservada
+    assert "<f>A1</f>" in updated
+
+    updated = set_cell(updated, 12, "E", number=4.32)
+    assert '<c r="E12" s="541"><v>4.32</v></c>' in updated        # estilo mantido
+
+
+def test_cell_style_de_celula_autofechada():
+    xml = ('<worksheet><sheetData><row r="5">'
+           '<c r="A5" s="7"/><c r="B5" s="8"><v>1</v></c>'
+           '</row></sheetData></worksheet>')
+    assert cell_style(xml, 5, "A") == "7"
+    assert cell_style(xml, 5, "B") == "8"
+
+
+def test_formula_com_resultado_textual_declara_o_tipo():
+    """Regressão: uma fórmula cujo cache é texto precisa de `t="str"`.
+
+    Sem o atributo, o leitor trata o cache como número e a pasta inteira fica
+    ilegível (`invalid literal for int()`). Só apareceu na Fase 2, porque até
+    então toda fórmula gravada tinha resultado numérico.
+    """
+    xml = cell_xml("F9", "10", formula='IFERROR(VLOOKUP(F7,x,3,FALSE),"")', value="H")
+    assert 't="str"' in xml
+    assert "<v>H</v>" in xml and "'H'" not in xml
+
+    numerica = cell_xml("G9", "10", formula="1+1", value=2)
+    assert 't="str"' not in numerica and "<v>2</v>" in numerica

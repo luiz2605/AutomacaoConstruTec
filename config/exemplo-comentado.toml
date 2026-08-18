@@ -43,3 +43,18 @@ log_sheet_name = "LOG AUTO"
 # substitution_force = { PAREDES = { 12 = "C3615" } }   # força a substituição
 # substitution_block = { PAREDES = ["C3614"] }          # proíbe substituir
 # quantity_override  = { REVESTIMENTOS = { 10 = "orcamento" } }
+
+# ---------------------------------------------------------------------------
+# Fase 2 — síntese de aba a partir do molde
+# ---------------------------------------------------------------------------
+# [targets]
+# template_sheet = "MODELO BASE"   # aba-molde clonada quando o tópico não tem aba
+# generate_missing = true          # false = só o modo de preenchimento
+# insumos_lookup_range = "insumos!$A$6:$D$8635"   # faixa do VLOOKUP de unidade
+#
+# [compositions]
+# column_sections = ["MATERIAIS"]  # vazio = todas as seções viram coluna.
+#                                  # No orçamento real, mão de obra e equipamento
+#                                  # são 34% das 443 colunas geradas.
+# bag_rounding_inputs = ["I0805"]  # insumos cotados em KG e comprados em saco
+# bag_size = 50.0

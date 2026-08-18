@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from .compositions import CompositionIndex
 from .config import CompositionConfig
-from .textutil import format_number
+from .textutil import format_number, normalize
 
 
 @dataclass
@@ -98,3 +98,63 @@ class Resolver:
         resolved = self.resolve(code)
         return {column: resolved[input_code]
                 for column, input_code in wanted.items() if input_code in resolved}
+
+
+@dataclass
+class InputColumn:
+    """Um insumo-folha que merece uma coluna na aba gerada."""
+    code: str
+    description: str
+    unit: str | None
+    used_by: list[str]                      # códigos de serviço que o consomem
+    section: str | None = None              # MATERIAIS, MAO DE OBRA, EQUIPAMENTOS...
+    unresolved_service: bool = False        # parece serviço, mas não tem composição
+
+    @property
+    def label(self) -> str:
+        return self.description or self.code
+
+
+def topic_inputs(items, index, resolver: Resolver,
+                 sections: tuple[str, ...] = ()) -> list[InputColumn]:
+    """Insumos-folha usados por um tópico inteiro, em ordem determinística.
+
+    A lista sai da resolução **recursiva** — nunca de `Composition.inputs` de
+    primeiro nível. A diferença é decisiva: a composição C0329 tem, no bloco
+    SERVIÇOS, o código C3129, que é ele mesmo uma sub-composição. Lendo o
+    primeiro nível, C3129 viraria uma coluna; o que precisa virar coluna são os
+    insumos reais de dentro dele.
+
+    A ordem é a de primeira aparição, percorrendo os itens na ordem do
+    orçamento, para que duas execuções sobre o mesmo PDF gerem a mesma aba.
+    """
+    columns: dict[str, InputColumn] = {}
+    descriptions = _input_catalog(index)
+    for item in items:
+        if index.get(item.code) is None:
+            continue
+        for code, coefficient in resolver.resolve(item.code).items():
+            existing = columns.get(code)
+            if existing is None:
+                description, unit, section = descriptions.get(code, (code, None, None))
+                columns[code] = InputColumn(
+                    code, description, unit, [item.code], section,
+                    unresolved_service=bool(resolver._service_re.match(code)
+                                            and index.get(code) is None))
+            elif item.code not in existing.used_by:
+                existing.used_by.append(item.code)
+    if not sections:
+        return list(columns.values())
+    wanted = [normalize(s) for s in sections]
+    return [c for c in columns.values()
+            if c.section and any(normalize(c.section).startswith(w) for w in wanted)]
+
+
+def _input_catalog(index) -> dict[str, tuple[str, str | None, str | None]]:
+    """Descrição, unidade e seção de cada insumo, como aparecem nas composições."""
+    catalog: dict[str, tuple[str, str | None, str | None]] = {}
+    for composition in index.compositions:
+        for code, item in composition.inputs.items():
+            if code not in catalog and item.description:
+                catalog[code] = (item.description, item.unit, item.section)
+    return catalog
