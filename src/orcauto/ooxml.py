@@ -305,24 +305,54 @@ def cell_style(xml: str, row: int, column: str) -> str | None:
     return style.group(1) if style else None
 
 
+def row_styles(xml: str, row: int, columns: list[str]) -> dict[str, str | None]:
+    """Índice de formato de cada célula de uma linha, para replicar em outra.
+
+    Capturar isso ANTES de escrever é o que permite dar a todas as linhas de
+    item o mesmo formato, e à linha de TOTAL o formato de TOTAL, mesmo quando
+    elas caem sobre linhas que o molde já trazia com formatos diferentes.
+    """
+    if not has_row(xml, row):
+        return {column: None for column in columns}
+    return {column: cell_style(xml, row, column) for column in columns}
+
+
+def hide_row(xml: str, row: int) -> str:
+    """Oculta uma linha (sobra do molde que não deve aparecer entre os dados)."""
+    if not has_row(xml, row):
+        return xml
+    match = _row_match(xml, row)
+    block = match.group(0)
+    head, rest = block.split(">", 1)
+    if 'hidden="1"' not in head:
+        head += ' hidden="1"'
+    return xml[:match.start()] + head + ">" + rest + xml[match.end():]
+
+
 def set_cell(xml: str, row: int, column: str, create: bool = True,
-             style_from: str | None = None, force_style: bool = False, **kwargs) -> str:
+             style_from: str | None = None, force_style: bool = False,
+             style: str | None = None, **kwargs) -> str:
     """Grava uma célula preservando o formato que ela já tinha.
+
+    `style` fixa o formato explicitamente e vence tudo — é como uma linha de
+    item recém-criada recebe o mesmo formato das linhas de item do molde, e a
+    linha de TOTAL recebe o formato de TOTAL, independentemente do que houvesse
+    naquela posição antes.
 
     `style_from` nomeia uma coluna-modelo da mesma linha, usada quando a célula
     alvo não tem formato próprio. Com `force_style`, o formato da coluna-modelo
     vence mesmo que a célula já tenha um: é o caso de uma coluna acrescentada à
-    direita da tabela, onde o formato existente é o do lado de fora da tabela e
-    herdá-lo deixaria a coluna nova visualmente destacada do resto.
+    direita da tabela.
     """
     if create:
         xml = ensure_row(xml, row)
     match = _row_match(xml, row)
     block = match.group(0)
     ref = f"{column}{row}"
-    style = cell_style(xml, row, column)
-    if style_from and (style is None or force_style):
-        style = cell_style(xml, row, style_from) or style
+    if style is None:
+        style = cell_style(xml, row, column)
+        if style_from and (style is None or force_style):
+            style = cell_style(xml, row, style_from) or style
     replacement = cell_xml(ref, style, **kwargs)
     pattern = _cell_pattern(ref)
     if pattern.search(block):

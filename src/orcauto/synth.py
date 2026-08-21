@@ -18,8 +18,9 @@ from dataclasses import dataclass, field
 from .compositions import Composition, CompositionIndex
 from .config import Config
 from .layout import TemplateLayout
-from .ooxml import (clear_row, ensure_row, set_cell, set_column_width, set_dimension,
-                    total_formula, unit_lookup_formula)
+from .ooxml import (cell_style, clear_row, ensure_row, hide_row, row_styles, set_cell,
+                    set_column_width, set_dimension, show_row, total_formula,
+                    unit_lookup_formula)
 from .pdf_budget import BudgetItem, Topic
 from .planner import SkippedItem
 from .resolver import Coefficient, InputColumn, Resolver, topic_inputs
@@ -95,11 +96,28 @@ def plan_synthesis(layout: TemplateLayout, topic: Topic, sheet_name: str,
 
 def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
                     config: Config | None = None) -> str:
-    """Escreve a aba sintetizada sobre a cópia do molde."""
+    """Escreve a aba sintetizada sobre a cópia do molde.
+
+    A ordem importa. O formato das linhas de item e o da linha de TOTAL são
+    capturados **antes** de qualquer escrita, e depois aplicados explicitamente.
+    Sem isso, uma linha de item que caísse sobre a linha de TOTAL do molde
+    herdaria o cinza de total, e o TOTAL de verdade, empurrado para baixo,
+    nasceria sem formato nenhum — que era exatamente o defeito.
+    """
     config = config or Config()
     unit_row = layout.header_row + 1
-    model = layout.slots[-1]                 # coluna-modelo para o que for acrescentado
+    model = layout.slots[-1]
     letters = [letter for letter, _ in plan.columns]
+    body = [layout.order_column, layout.code_column, layout.description_column,
+            layout.unit_column, layout.quantity_column] + letters
+
+    # ---- formatos de referência, lidos do molde intacto
+    item_style = row_styles(xml, layout.first_row, body)
+    total_style = row_styles(xml, layout.total_row, body)
+
+    # ---- barra colorida: cada aba diz a que tópico pertence
+    xml = set_cell(xml, layout.banner_row, layout.order_column,
+                   text=f"{config.targets.banner_prefix}{plan.topic_name}")
 
     # ---- colunas: cabeçalho de três linhas, escrito do zero
     # O molde traz a fórmula de unidade mas não a de nome; herdar cegamente
@@ -117,44 +135,54 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
                                                    config.targets.insumos_lookup_range),
                        value=column_input.unit)
 
-    # ---- uma linha por item do orçamento
+    # ---- uma linha por item, TODAS com o mesmo formato de linha de item
     for entry in plan.rows:
         xml = ensure_row(xml, entry.row, layout.first_row)
-        xml = set_cell(xml, entry.row, layout.order_column, text=entry.item.order)
-        xml = set_cell(xml, entry.row, layout.code_column, text=entry.item.code)
+        xml = show_row(xml, entry.row)
+        xml = set_cell(xml, entry.row, layout.order_column,
+                       style=item_style[layout.order_column], text=entry.item.order)
+        xml = set_cell(xml, entry.row, layout.code_column,
+                       style=item_style[layout.code_column], text=entry.item.code)
         xml = set_cell(xml, entry.row, layout.description_column,
+                       style=item_style[layout.description_column],
                        text=entry.composition.description)
         xml = set_cell(xml, entry.row, layout.unit_column,
+                       style=item_style[layout.unit_column],
                        text=entry.composition.unit or entry.item.unit or "")
-        if entry.quantity is not None:
-            xml = set_cell(xml, entry.row, layout.quantity_column, number=entry.quantity)
+        xml = set_cell(xml, entry.row, layout.quantity_column,
+                       style=item_style[layout.quantity_column],
+                       **({"number": entry.quantity} if entry.quantity is not None else {}))
         for letter in letters:
-            forced = letter in plan.appended
             coefficient = entry.coefficients.get(letter)
+            estilo = item_style.get(letter) or cell_style(xml, entry.row, model)
             if coefficient is None:
-                xml = set_cell(xml, entry.row, letter, style_from=model, force_style=forced)
+                xml = set_cell(xml, entry.row, letter, style=estilo)
             else:
-                xml = set_cell(xml, entry.row, letter, style_from=model, force_style=forced,
+                xml = set_cell(xml, entry.row, letter, style=estilo,
                                formula=coefficient.formula(config.compositions.coefficient_column),
                                value=coefficient.value)
 
-    # ---- limpa o que sobrou do molde entre o fim do bloco e o TOTAL antigo
-    body = [layout.order_column, layout.code_column, layout.description_column,
-            layout.unit_column, layout.quantity_column] + letters
-    for row in range(plan.total_row, max(plan.total_row, layout.total_row) + 1):
-        xml = clear_row(xml, row, body)
-
-    # ---- linha de TOTAL, com a fórmula de cada coluna gerada do zero
+    # ---- linha de TOTAL, sempre logo depois do último item
     xml = ensure_row(xml, plan.total_row, layout.total_row)
+    xml = show_row(xml, plan.total_row)
+    for column in body:
+        xml = set_cell(xml, plan.total_row, column, style=total_style.get(column))
     xml = set_cell(xml, plan.total_row, layout.order_column,
-                   style_from=layout.order_column, text=config.targets.total_label)
+                   style=total_style.get(layout.order_column),
+                   text=config.targets.total_label)
     for letter, column_input in plan.columns:
         bag = (config.compositions.bag_size
                if column_input.code in config.compositions.bag_rounding_inputs else None)
-        xml = set_cell(xml, plan.total_row, letter, style_from=model,
-                       force_style=letter in plan.appended,
+        xml = set_cell(xml, plan.total_row, letter,
+                       style=total_style.get(letter) or cell_style(xml, plan.total_row, model),
                        formula=total_formula(letter, layout.quantity_column,
                                              plan.first_row, plan.total_row - 1,
                                              bag_size=bag))
+
+    # ---- sobras do molde depois do TOTAL: esvaziadas e ocultas
+    for row in range(plan.total_row + 1, layout.total_row + 1):
+        xml = clear_row(xml, row, body)
+        xml = hide_row(xml, row)
+
     return set_dimension(xml, letters[-1] if letters else layout.quantity_column,
                          plan.total_row)

@@ -98,6 +98,7 @@ class TemplateLayout:
     last_row: int
     total_row: int
     slots: list[str]        # colunas de insumo já formatadas no molde
+    banner_row: int         # barra colorida com o nome do levantamento
 
 
 class LayoutError(RuntimeError):
@@ -129,6 +130,7 @@ def detect_template(formula_ws, value_ws, config: TargetConfig | None = None) ->
                           f"com SUMPRODUCT na linha {total_row}")
     return TemplateLayout(
         sheet=formula_ws.title, header_row=header_row, input_row=header_row - 1,
+        banner_row=_find_banner_row(value_ws, header_row - 1, config),
         quantity_column=quantity_column,
         order_column=column_letter(max(1, quantity_index - 4)),
         code_column=column_letter(max(1, quantity_index - 3)),
@@ -178,6 +180,21 @@ def _find_total_row(value_ws, config: TargetConfig) -> int:
             if normalize(value_ws.cell(row, column).value) == wanted:
                 return row
     raise LayoutError(f"[{value_ws.title}] linha de {config.total_label!r} não encontrada")
+
+
+def _find_banner_row(value_ws, input_row: int, config: TargetConfig) -> int:
+    """Linha da barra colorida que nomeia o levantamento.
+
+    Procura o texto do prefixo nas primeiras colunas; sem ele (o molde vem com
+    a barra em branco), assume a linha imediatamente acima da dos códigos de
+    insumo, que é onde ela fica no desenho da planilha.
+    """
+    wanted = normalize(config.banner_prefix)
+    for row in range(1, max(input_row, 1)):
+        for column in range(1, 4):
+            if wanted and normalize(value_ws.cell(row, column).value).startswith(wanted):
+                return row
+    return max(1, input_row - 1)
 
 
 def _read_total_range(formula_ws, total_row: int) -> tuple[str, int, int]:

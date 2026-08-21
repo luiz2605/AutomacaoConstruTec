@@ -132,9 +132,23 @@ def template_workbook_path(tmp_path: Path) -> Path:
     # duas colunas de insumo já desenhadas; o resto terá de ser acrescentado
     for column in ("F", "G"):
         template[f"{column}9"] = f'=IFERROR(VLOOKUP({column}7,insumos!$A$6:$D$99,3,FALSE),"")'
+    template["A6"] = ""                       # barra colorida, vazia no molde
     template["A14"] = "TOTAL"
     template["F14"] = "=SUMPRODUCT($E$10:$E$12,F10:F12)"
     template["G14"] = "=ROUNDUP((SUMPRODUCT($E$10:$E$12,G10:G12)/50),0)"
+
+    # formatos distintos, para que os testes consigam distinguir uma linha de
+    # item de uma linha de TOTAL — é o que o molde real faz com o cinza
+    from openpyxl.styles import Border, Font, PatternFill, Side
+    borda = Border(*[Side(style="thin")] * 4)
+    cinza = PatternFill("solid", start_color="FFD9D9D9")
+    for column in "ABCDEFG":
+        template[f"{column}10"].border = borda
+        template[f"{column}14"].fill = cinza
+        template[f"{column}14"].font = Font(bold=True)
+    # a linha 13 do molde imita as linhas "de passagem" quebradas do real:
+    # existe, mas com formato diferente das linhas de item
+    template["A13"] = "=B99"
 
     path = tmp_path / "base.xlsx"
     workbook.save(path)

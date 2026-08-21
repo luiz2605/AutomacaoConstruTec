@@ -75,6 +75,8 @@ class TargetConfig:
     generate_missing: bool = True
     # faixa consultada pelo VLOOKUP de unidade no cabeçalho das colunas novas
     insumos_lookup_range: str = "insumos!$A$6:$D$8635"
+    # texto da barra colorida acima do cabeçalho, reescrito por aba gerada
+    banner_prefix: str = "LEVANTAMENTO - "
 
 
 @dataclass

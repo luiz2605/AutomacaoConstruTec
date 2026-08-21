@@ -264,3 +264,88 @@ def test_topico_sem_coluna_nao_vira_aba_vazia(template_workbook_path, topics, tm
     assert [p.created for p in resultado.synth] == [False]
     assert "seções configuradas" in resultado.synth[0].reason
     assert "REVESTIMENTO" not in openpyxl.load_workbook(destino).sheetnames
+
+
+# =========================================================================
+# Fase 2.1 — a linha de TOTAL é reservada, e o formato é uniforme
+# =========================================================================
+def _muitos_itens():
+    """Tópico maior que o bloco do molde (3 linhas), forçando transbordo."""
+    from orcauto.pdf_budget import BudgetItem, Topic
+
+    def item(ordem, codigo, quantidade):
+        return BudgetItem(ordem, codigo, "X", "M2", quantidade, 1.0, quantidade,
+                          1, 5, "REVESTIMENTO")
+
+    return [Topic(5, "REVESTIMENTO", [
+        item("5.1", "S001", 10.0), item("5.2", "S002", 20.0),
+        item("5.3", "S005", 30.0), item("5.4", "S001", 40.0),
+        item("5.5", "S002", 50.0),
+    ])]
+
+
+def _gerar(caminho, topicos, tmp_path, nome="saida.xlsx"):
+    from orcauto.pipeline import run
+    config = Config(compositions=CompositionConfig(sheets=["COMPOSICOES"],
+                                                   service_code_re=r"^S"),
+                    targets=TargetConfig(template_sheet="MODELO BASE"))
+    destino = tmp_path / nome
+    resultado = run(caminho, None, destino, config, topics=topicos)
+    return resultado, openpyxl.load_workbook(destino)["REVESTIMENTO"]
+
+
+def test_total_nunca_recebe_dados_de_item_ao_transbordar(template_workbook_path, tmp_path):
+    """Com 5 itens e bloco de 3, um item cairia sobre a linha de TOTAL do molde.
+
+    Era o defeito: a linha 14 continuava cinza, mas passava a exibir item,
+    código e coeficientes, e o TOTAL de verdade ia parar mais abaixo sem
+    formato nenhum.
+    """
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert [sheet[f"B{r}"].value for r in range(10, 15)] == \
+           ["S001", "S002", "S005", "S001", "S002"]
+    assert sheet["A15"].value == "TOTAL"
+    assert sheet["B15"].value in (None, "")          # TOTAL não carrega código
+    assert sheet["F15"].value == "=SUMPRODUCT($E$10:$E$14,F10:F14)"
+
+
+def test_todas_as_linhas_de_item_tem_o_mesmo_formato(template_workbook_path, tmp_path):
+    """Inclui as que caem sobre linhas que o molde já trazia com outro formato."""
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    referencia = sheet["A10"]._style
+    for row in range(11, 15):
+        assert sheet[f"A{row}"]._style == referencia, f"linha {row} destoa"
+        assert sheet[f"F{row}"]._style == sheet["F10"]._style
+
+
+def test_total_deslocado_mantem_o_formato_de_total(template_workbook_path, tmp_path):
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert sheet["A15"].font.bold is True
+    assert sheet["A15"].fill.start_color.rgb == "FFD9D9D9"
+    assert sheet["A15"]._style != sheet["A10"]._style      # não é linha de item
+
+
+def test_sobra_do_molde_fica_oculta_quando_ha_poucos_itens(template_workbook_path,
+                                                           topics, tmp_path):
+    """3 itens num bloco de 3: o TOTAL sobe para a 13 e a 14 some da vista."""
+    _, sheet = _gerar(template_workbook_path, topics, tmp_path)
+    assert sheet["A13"].value == "TOTAL"
+    assert sheet.row_dimensions[14].hidden is True
+    assert sheet["A14"].value in (None, "")
+
+
+def test_barra_do_cabecalho_recebe_o_nome_do_topico(template_workbook_path,
+                                                    topics, tmp_path):
+    """Vale tanto com transbordo quanto sem — não é efeito colateral do resto."""
+    _, curto = _gerar(template_workbook_path, topics, tmp_path, "curto.xlsx")
+    _, longo = _gerar(template_workbook_path, _muitos_itens(), tmp_path, "longo.xlsx")
+    assert curto["A6"].value == "LEVANTAMENTO - REVESTIMENTO"
+    assert longo["A6"].value == "LEVANTAMENTO - REVESTIMENTO"
+
+
+def test_total_cobre_exatamente_as_linhas_de_item(template_workbook_path, tmp_path):
+    resultado, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    plano = resultado.synth[0]
+    assert (plano.first_row, plano.total_row) == (10, 15)
+    assert sheet["G15"].value == "=ROUNDUP((SUMPRODUCT($E$10:$E$14,G10:G14)/50),0)" \
+        or sheet["G15"].value == "=SUMPRODUCT($E$10:$E$14,G10:G14)"
