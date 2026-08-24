@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: orcauto
+    runtime: python
+    plan: free            # 512 MB — o pico medido é ~180 MB
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: uvicorn webapp.app:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 120
+    healthCheckPath: /saude
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: ORCAUTO_MAX_MB
+        value: "40"

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Levantamento automático — ConstruTec</title>
+<style>
+  :root{
+    --tinta:#16202b; --suave:#5b6b7c; --linha:#dfe5ec; --fundo:#f4f6f9;
+    --marca:#1f6feb; --marca-escura:#1657b8; --ok:#12855b; --erro:#c0392b;
+    --papel:#fff; --sombra:0 1px 2px rgba(16,32,48,.06),0 8px 24px rgba(16,32,48,.08);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --tinta:#e8edf3; --suave:#9aa8b8; --linha:#2b3644; --fundo:#111820;
+           --papel:#18212b; --sombra:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35); }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fundo);color:var(--tinta);
+       font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+  .cartao{background:var(--papel);border:1px solid var(--linha);border-radius:14px;
+          box-shadow:var(--sombra);max-width:560px;width:100%;padding:32px}
+  h1{font-size:1.35rem;margin:0 0 6px}
+  .sub{color:var(--suave);margin:0 0 26px;font-size:.95rem}
+  /* label é inline por padrão: sem display:block o padding não cria caixa e a
+     área tracejada se sobrepõe ao botão */
+  .area{display:block;border:2px dashed var(--linha);border-radius:12px;
+        padding:30px 20px;text-align:center;cursor:pointer;
+        transition:border-color .15s,background .15s}
+  .area:hover,.area.sobre{border-color:var(--marca);background:rgba(31,111,235,.05)}
+  .area p{margin:8px 0 0;color:var(--suave);font-size:.9rem}
+  .area strong{font-size:1rem}
+  input[type=file]{display:none}
+  button{width:100%;margin-top:18px;padding:13px;border:0;border-radius:9px;
+         background:var(--marca);color:#fff;font-size:1rem;font-weight:600;cursor:pointer}
+  button:hover:not(:disabled){background:var(--marca-escura)}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  .oculto{display:none!important}
+  .centro{text-align:center;padding:12px 0}
+  .roda{width:38px;height:38px;margin:0 auto 14px;border:3px solid var(--linha);
+        border-top-color:var(--marca);border-radius:50%;animation:girar .9s linear infinite}
+  @keyframes girar{to{transform:rotate(360deg)}}
+  .aviso{padding:14px 16px;border-radius:9px;font-size:.92rem;margin-top:18px}
+  .aviso.erro{background:rgba(192,57,43,.1);color:var(--erro);border:1px solid rgba(192,57,43,.25)}
+  .aviso.ok{background:rgba(18,133,91,.1);color:var(--ok);border:1px solid rgba(18,133,91,.25)}
+  .resumo{display:flex;gap:10px;margin:18px 0;flex-wrap:wrap}
+  .caixa{flex:1;min-width:110px;background:var(--fundo);border:1px solid var(--linha);
+         border-radius:9px;padding:12px;text-align:center}
+  .caixa b{display:block;font-size:1.35rem}
+  .caixa span{color:var(--suave);font-size:.78rem}
+  .link{display:block;text-align:center;margin-top:14px;color:var(--suave);
+        font-size:.9rem;cursor:pointer;text-decoration:underline;background:none;border:0;width:100%}
+  ul{margin:8px 0 0;padding-left:20px;font-size:.88rem;color:var(--suave)}
+</style>
+</head>
+<body>
+<main class="cartao">
+  <h1>Levantamento automático</h1>
+  <p class="sub">Envie o Orçamento Analítico em PDF. A planilha de levantamento
+     é gerada a partir dele e das composições da tabela SEINFRA.</p>
+
+  {% if indisponivel %}
+    <div class="aviso erro">{{ indisponivel }}</div>
+  {% else %}
+  <form id="form">
+    <label class="area" id="area">
+      <input type="file" id="arquivo" name="arquivo" accept="application/pdf,.pdf">
+      <strong id="rotulo">Clique aqui ou arraste o PDF</strong>
+      <p>Somente PDF, até {{ tamanho_maximo_mb }} MB</p>
+    </label>
+    <button type="submit" id="enviar" disabled>Gerar planilha</button>
+  </form>
+
+  <div id="processando" class="centro oculto">
+    <div class="roda"></div>
+    <strong>Processando o orçamento…</strong>
+    <p class="sub" style="margin:6px 0 0">Cruzando os itens com as composições.
+       Costuma levar menos de um minuto — pode deixar esta aba aberta.</p>
+    <p class="sub" id="relogio" style="margin:4px 0 0"></p>
+  </div>
+
+  <div id="concluido" class="oculto">
+    <div class="aviso ok">Planilha gerada.</div>
+    <div class="resumo">
+      <div class="caixa"><b id="n_abas">–</b><span>abas geradas</span></div>
+      <div class="caixa"><b id="n_linhas">–</b><span>serviços</span></div>
+      <div class="caixa"><b id="n_fora">–</b><span>itens sem composição</span></div>
+    </div>
+    <div id="avisos"></div>
+    <button id="baixar">Baixar planilha</button>
+    <button class="link" id="denovo">Enviar outro orçamento</button>
+  </div>
+
+  <div id="falhou" class="oculto">
+    <div class="aviso erro" id="mensagem_erro"></div>
+    <button class="link" id="tentar">Tentar de novo</button>
+  </div>
+  {% endif %}
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const form = $("form");
+if (form) {
+  let jobId = null, inicio = 0, cronometro = null;
+  const mostrar = alvo => ["form","processando","concluido","falhou"]
+        .forEach(id => $(id).classList.toggle("oculto", id !== alvo));
+
+  $("arquivo").addEventListener("change", () => {
+    const arquivo = $("arquivo").files[0];
+    $("rotulo").textContent = arquivo ? arquivo.name : "Clique aqui ou arraste o PDF";
+    $("enviar").disabled = !arquivo;
+  });
+
+  const area = $("area");
+  ["dragenter","dragover"].forEach(e => area.addEventListener(e, ev => {
+    ev.preventDefault(); area.classList.add("sobre");
+  }));
+  ["dragleave","drop"].forEach(e => area.addEventListener(e, ev => {
+    ev.preventDefault(); area.classList.remove("sobre");
+  }));
+  area.addEventListener("drop", ev => {
+    const arquivo = ev.dataTransfer.files[0];
+    if (arquivo) {
+      const lista = new DataTransfer(); lista.items.add(arquivo);
+      $("arquivo").files = lista.files;
+      $("arquivo").dispatchEvent(new Event("change"));
+    }
+  });
+
+  const falhar = texto => {
+    clearInterval(cronometro);
+    $("mensagem_erro").textContent = texto;
+    mostrar("falhou");
+  };
+
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const dados = new FormData();
+    dados.append("arquivo", $("arquivo").files[0]);
+    mostrar("processando");
+    inicio = Date.now();
+    cronometro = setInterval(() => {
+      $("relogio").textContent = Math.round((Date.now() - inicio) / 1000) + " s";
+    }, 1000);
+    try {
+      const resposta = await fetch("/processar", {method: "POST", body: dados});
+      const corpo = await resposta.json();
+      if (!resposta.ok) return falhar(corpo.detail || "Não foi possível enviar o arquivo.");
+      jobId = corpo.id;
+      consultar();
+    } catch (erro) {
+      falhar("Não foi possível falar com o servidor. Verifique sua conexão.");
+    }
+  });
+
+  async function consultar() {
+    try {
+      const resposta = await fetch("/estado/" + jobId);
+      const corpo = await resposta.json();
+      if (!resposta.ok) return falhar(corpo.detail || "Processamento não encontrado.");
+      if (corpo.estado === "erro") return falhar(corpo.erro);
+      if (corpo.estado === "pronto") {
+        clearInterval(cronometro);
+        $("n_abas").textContent = corpo.abas_criadas + corpo.abas_preenchidas;
+        $("n_linhas").textContent = corpo.linhas;
+        $("n_fora").textContent = corpo.nao_aplicados;
+        $("avisos").innerHTML = corpo.avisos && corpo.avisos.length
+          ? "<ul>" + corpo.avisos.map(a =>
+              "<li>" + a.replace(/[<>&]/g, c =>
+                ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])) + "</li>").join("") + "</ul>"
+          : "";
+        return mostrar("concluido");
+      }
+      setTimeout(consultar, 1500);
+    } catch (erro) {
+      falhar("A conexão com o servidor caiu durante o processamento.");
+    }
+  }
+
+  $("baixar").addEventListener("click", () => {
+    window.location = "/baixar/" + jobId;
+    setTimeout(() => { $("baixar").textContent = "Baixado — envie outro orçamento"; }, 1200);
+  });
+  const recomecar = () => { location.reload(); };
+  $("denovo").addEventListener("click", recomecar);
+  $("tentar").addEventListener("click", recomecar);
+}
+</script>
+</body>
+</html>

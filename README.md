@@ -122,6 +122,12 @@ src/orcauto/
   report.py         relatório de terminal e aba LOG
   pipeline.py       orquestração
   cli.py            run / inspect / check
+
+webapp/
+  service.py        processar_orcamento() — sem HTTP, sem CLI
+  jobs.py           fila em memória, execução em thread, expiração
+  app.py            rotas FastAPI
+  templates/        página única
 ```
 
 ## Testes
