@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--pdf", required=True, help="orçamento analítico (.pdf)")
     run.add_argument("--out", required=True, help="arquivo de saída (.xlsx)")
     run.add_argument("--quiet", action="store_true", help="não imprime o relatório")
+    run.add_argument("--log-insercoes", action="store_true",
+                     help="mostra cada coeficiente gravado, com célula e valor anterior")
 
     inspect = sub.add_parser("inspect", help="mostra o que foi detectado, sem gravar nada")
     _add_common(inspect)
@@ -39,7 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def command_run(args) -> int:
+    from .audit import configurar_terminal
     from .pipeline import run
+    configurar_terminal(bool(getattr(args, "log_insercoes", False)))
     result = run(args.xlsx, args.pdf, args.out, Config.load(args.config))
     if not args.quiet:
         print(result.report)
@@ -51,6 +55,8 @@ def command_run(args) -> int:
     print(f"gerado: {result.output}")
     print(f"  {len(result.plans)} aba(s) preenchida(s), {len(criadas)} aba(s) criada(s) do molde")
     print(f"  {written} linhas gravadas, {skipped} itens não aplicados")
+    if result.insercoes is not None:
+        print(f"  {len(result.insercoes)} coeficientes inseridos")
     nao_criadas = [plan for plan in result.synth if not plan.created]
     for plan in nao_criadas:
         print(f"  aba não criada — tópico {plan.topic_number} {plan.topic_name}: {plan.reason}")

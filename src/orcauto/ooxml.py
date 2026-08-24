@@ -295,6 +295,32 @@ def _any_cell_pattern(row: int | None = None) -> re.Pattern:
     return re.compile(r'<c r="([A-Z]+)%s"%s%s' % (suffix, _ATTRS, _CELL_BODY), re.S)
 
 
+def cell_content(xml: str, row: int, column: str):
+    """O que está na célula hoje, em forma legível — para o log de auditoria.
+
+    Devolve a fórmula (com `=`), o número, o texto embutido, ou None se vazia.
+    """
+    if not has_row(xml, row):
+        return None
+    found = _cell_pattern(f"{column}{row}").search(_row_match(xml, row).group(0))
+    if not found:
+        return None
+    elemento = found.group(0)
+    formula = re.search(r"<f\b[^>]*?(?:/>|>(.*?)</f>)", elemento, re.S)
+    if formula and formula.group(1):
+        return "=" + _unescape(formula.group(1))
+    texto = re.search(r"<is>\s*<t[^>]*>(.*?)</t>", elemento, re.S)
+    if texto:
+        return _unescape(texto.group(1))
+    valor = re.search(r"<v>(.*?)</v>", elemento, re.S)
+    if valor:
+        bruto = _unescape(valor.group(1))
+        if 't="s"' in elemento:              # texto na tabela de strings da pasta
+            return "(texto)"
+        return bruto
+    return None
+
+
 def cell_style(xml: str, row: int, column: str) -> str | None:
     """Índice de formato da célula, para que a gravação não altere a aparência."""
     block = _row_match(xml, row).group(0)

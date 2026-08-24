@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from .compositions import Composition, CompositionIndex
 from .config import Config
 from .layout import TemplateLayout
-from .ooxml import (cell_style, clear_row, ensure_row, hide_row, row_styles, set_cell,
+from .audit import Auditoria
+from .ooxml import (cell_content, cell_style, clear_row, ensure_row, hide_row, row_styles, set_cell,
                     set_column_width, set_dimension, show_row, total_formula,
                     unit_lookup_formula)
 from .pdf_budget import BudgetItem, Topic
@@ -95,7 +96,8 @@ def plan_synthesis(layout: TemplateLayout, topic: Topic, sheet_name: str,
 
 
 def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
-                    config: Config | None = None) -> str:
+                    config: Config | None = None,
+                    auditoria: Auditoria | None = None) -> str:
     """Escreve a aba sintetizada sobre a cópia do molde.
 
     A ordem importa. O formato das linhas de item e o da linha de TOTAL são
@@ -158,6 +160,14 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
             if coefficient is None:
                 xml = set_cell(xml, entry.row, letter, style=estilo)
             else:
+                # a inserção só chega aqui quando o insumo desta coluna consta na
+                # composição deste serviço: é o cruzamento duplo linha × coluna
+                if auditoria is not None:
+                    auditoria.inserir(aba=plan.sheet, codigo=entry.item.code,
+                                      insumo=coefficient.input_code,
+                                      celula=f"{letter}{entry.row}",
+                                      anterior=cell_content(xml, entry.row, letter),
+                                      novo=round(coefficient.value, 6))
                 xml = set_cell(xml, entry.row, letter, style=estilo,
                                formula=coefficient.formula(config.compositions.coefficient_column),
                                value=coefficient.value)

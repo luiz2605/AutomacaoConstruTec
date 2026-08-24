@@ -349,3 +349,59 @@ def test_total_cobre_exatamente_as_linhas_de_item(template_workbook_path, tmp_pa
     assert (plano.first_row, plano.total_row) == (10, 15)
     assert sheet["G15"].value == "=ROUNDUP((SUMPRODUCT($E$10:$E$14,G10:G14)/50),0)" \
         or sheet["G15"].value == "=SUMPRODUCT($E$10:$E$14,G10:G14)"
+
+
+# =========================================================================
+# Auditoria de inserção: cruzamento duplo linha × coluna
+# =========================================================================
+def test_coeficiente_so_entra_no_cruzamento_correto(template_workbook_path, tmp_path):
+    """Nenhuma célula recebe coeficiente de insumo que o serviço não consome.
+
+    A garantia não é um `if` solto: o valor vem de
+    `resolver.coefficients_for(codigo, colunas)`, que só devolve chave para o
+    insumo presente na resolução daquele serviço. Este teste amarra isso ao
+    resultado gravado, comparando com a composição de cada linha.
+    """
+    from orcauto.compositions import CompositionIndex, parse_sheet
+    from orcauto.resolver import Resolver
+    resultado, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    plano = resultado.synth[0]
+
+    index = CompositionIndex(parse_sheet(
+        [r for r in _linhas_composicao()], "COMPOSICOES"))
+    resolve = Resolver(index, CompositionConfig(service_code_re=r"^S"))
+    for entrada in plano.rows:
+        previstos = set(resolve.resolve(entrada.item.code))
+        for letra, coluna in plano.columns:
+            valor = sheet[f"{letra}{entrada.row}"].value
+            if coluna.code in previstos:
+                assert valor is not None, f"{letra}{entrada.row} deveria ter coeficiente"
+            else:
+                assert valor in (None, ""), \
+                    f"{letra}{entrada.row} recebeu {coluna.code}, que {entrada.item.code} não usa"
+
+
+def _linhas_composicao():
+    from tests.conftest import COMPOSITION_ROWS
+    ultimo = max(COMPOSITION_ROWS)
+    return [COMPOSITION_ROWS.get(n, []) for n in range(1, ultimo + 1)]
+
+
+def test_log_registra_cada_insercao_com_celula_e_valor_anterior(template_workbook_path,
+                                                                tmp_path):
+    resultado, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    auditoria = resultado.insercoes
+    assert len(auditoria) > 0
+    registro = auditoria.registros[0]
+    assert registro.aba == "REVESTIMENTO"
+    assert registro.celula[0].isalpha() and registro.celula[1:].isdigit()
+    assert registro.anterior == "Vazio"          # aba nasce do molde, célula vazia
+    linha = registro.linha()
+    for pedaco in ("[INSERÇÃO]", "Aba:", "Código:", "Insumo:",
+                   "Valor Anterior:", "Novo Valor:", "Linha/Coluna:"):
+        assert pedaco in linha
+
+
+def test_log_conta_por_aba(template_workbook_path, tmp_path):
+    resultado, _ = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert resultado.insercoes.por_aba() == {"REVESTIMENTO": len(resultado.insercoes)}
