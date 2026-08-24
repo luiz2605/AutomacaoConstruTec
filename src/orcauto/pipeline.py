@@ -112,8 +112,13 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
         topics = read_budget(Path(pdf_path), config.pdf)
     budget_codes = set(items_by_code(topics))
 
-    formulas = openpyxl.load_workbook(xlsx_path)
-    values = openpyxl.load_workbook(xlsx_path, data_only=True)
+    # `read_only` é o que torna isto viável em servidor: numa pasta com uma aba
+    # de 65 mil linhas, a carga normal do openpyxl materializa tudo e passa de
+    # 450 MB por workbook — e são dois. Em streaming, o par fica em torno de
+    # 50 MB. A detecção de layout já lê por varredura única e limitada, então
+    # não depende de acesso aleatório a célula, que em read_only seria O(n²).
+    formulas = openpyxl.load_workbook(xlsx_path, read_only=True)
+    values = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     index = build_index(values, config.compositions)
     resolver = Resolver(index, config.compositions)
 
@@ -157,6 +162,8 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
                           log_sheet_xml(build_rows(audit), bold, wrap))
 
     package.save(output)
+    formulas.close()
+    values.close()
     return Result(output=output, plans=plans, synth=synth, topics=topics,
                   index=index, audit=audit)
 
