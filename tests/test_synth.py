@@ -177,7 +177,10 @@ def test_coluna_acrescentada_herda_o_formato_da_coluna_modelo(template_workbook_
         xml = pacote.read(alvo).decode("utf-8")
     largura = re.search(r'<col min="8" max="8"[^>]*/>', xml)
     assert largura is not None                       # coluna H ganhou <col> próprio
-    assert 'ref="A1:H' in re.search(r'<dimension ref="[^"]+"', xml).group(0)
+    # a dimensão precisa alcançar ao menos a coluna acrescentada (H)
+    fim = re.search(r'<dimension ref="[A-Z]+\d+:([A-Z]+)\d+"', xml).group(1)
+    from orcauto.textutil import column_index
+    assert column_index(fim) >= column_index("H")
 
 
 def test_linha_de_total_desce_com_o_bloco_e_gera_a_formula(gerado):
@@ -405,3 +408,48 @@ def test_log_registra_cada_insercao_com_celula_e_valor_anterior(template_workboo
 def test_log_conta_por_aba(template_workbook_path, tmp_path):
     resultado, _ = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
     assert resultado.insercoes.por_aba() == {"REVESTIMENTO": len(resultado.insercoes)}
+
+
+def test_coluna_acrescentada_nao_herda_estilo_de_fora_da_tabela(template_workbook_path,
+                                                                tmp_path):
+    """Regressão: a linha de item do molde tem células além das colunas de insumo.
+
+    No molde real ela vai até S, e as posições M a S carregam estilos de fora
+    da tabela — sem borda e com outro formato numérico. Herdá-los fazia a
+    divisória vertical sumir naquele trecho e o coeficiente aparecer como `15`
+    em vez de `15,0000`, o que parecia dado errado sendo só formato.
+    """
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    modelo = sheet["G10"]                      # última coluna de insumo do molde
+    acrescentada = sheet["H10"]                # cai sobre uma célula de fora da tabela
+    assert acrescentada.number_format == modelo.number_format
+    assert acrescentada.border.right.style == modelo.border.right.style
+    assert acrescentada.alignment.horizontal == modelo.alignment.horizontal
+
+
+def test_total_de_coluna_acrescentada_usa_o_formato_de_total(template_workbook_path,
+                                                             tmp_path):
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert sheet["H15"].number_format == sheet["G15"].number_format
+    assert sheet["H15"].font.bold == sheet["G15"].font.bold
+
+
+def test_coluna_alarga_quando_o_total_nao_caberia(template_workbook_path, tmp_path):
+    """O TOTAL é quantidade x coeficiente, ordens de grandeza acima do coeficiente."""
+    import openpyxl as opx
+    livro = opx.load_workbook(template_workbook_path)
+    livro["MODELO BASE"].column_dimensions["F"].width = 6.0     # estreita de propósito
+    livro.save(template_workbook_path)
+
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert sheet.column_dimensions["F"].width > 6.0             # alargou
+
+
+def test_coluna_larga_o_bastante_nao_encolhe(template_workbook_path, tmp_path):
+    import openpyxl as opx
+    livro = opx.load_workbook(template_workbook_path)
+    livro["MODELO BASE"].column_dimensions["F"].width = 40.0
+    livro.save(template_workbook_path)
+
+    _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
+    assert sheet.column_dimensions["F"].width == 40.0           # desenho preservado

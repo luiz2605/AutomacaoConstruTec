@@ -150,6 +150,15 @@ def template_workbook_path(tmp_path: Path) -> Path:
     # existe, mas com formato diferente das linhas de item
     template["A13"] = "=B99"
 
+    # H e I existem na linha de item do molde, mas são de FORA da tabela — no
+    # molde real a linha 10 vai até S com estilos residuais. Uma coluna
+    # acrescentada que caia nessas posições não pode herdar isso.
+    from openpyxl.styles import Alignment
+    for column in ("H", "I"):
+        template[f"{column}10"].alignment = Alignment(horizontal="center")
+        template[f"{column}10"].number_format = "0.00"
+        template[f"{column}14"].number_format = "General"
+
     path = tmp_path / "base.xlsx"
     workbook.save(path)
     return path

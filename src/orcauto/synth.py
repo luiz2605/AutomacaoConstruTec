@@ -117,6 +117,21 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
     item_style = row_styles(xml, layout.first_row, body)
     total_style = row_styles(xml, layout.total_row, body)
 
+    def estilo_de(mapa: dict, letra: str) -> str | None:
+        """Formato a aplicar numa coluna de insumo.
+
+        Para uma coluna acrescentada à direita, o molde pode ter naquela
+        posição uma célula de FORA da tabela — no molde real a linha de item
+        vai até S, e as colunas M a S carregam estilos residuais, sem borda e
+        com formato numérico diferente. Herdar isso faz a divisória sumir e o
+        coeficiente aparecer como `15` em vez de `15,0000`. A coluna
+        acrescentada segue sempre a coluna-modelo da tabela.
+        """
+        padrao = mapa.get(model)
+        if letra in plan.appended:
+            return padrao
+        return mapa.get(letra) or padrao
+
     # ---- barra colorida: cada aba diz a que tópico pertence
     xml = set_cell(xml, layout.banner_row, layout.order_column,
                    text=f"{config.targets.banner_prefix}{plan.topic_name}")
@@ -156,7 +171,7 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
                        **({"number": entry.quantity} if entry.quantity is not None else {}))
         for letter in letters:
             coefficient = entry.coefficients.get(letter)
-            estilo = item_style.get(letter) or cell_style(xml, entry.row, model)
+            estilo = estilo_de(item_style, letter)
             if coefficient is None:
                 xml = set_cell(xml, entry.row, letter, style=estilo)
             else:
@@ -176,15 +191,14 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
     xml = ensure_row(xml, plan.total_row, layout.total_row)
     xml = show_row(xml, plan.total_row)
     for column in body:
-        xml = set_cell(xml, plan.total_row, column, style=total_style.get(column))
+        xml = set_cell(xml, plan.total_row, column, style=estilo_de(total_style, column))
     xml = set_cell(xml, plan.total_row, layout.order_column,
                    style=total_style.get(layout.order_column),
                    text=config.targets.total_label)
     for letter, column_input in plan.columns:
         bag = (config.compositions.bag_size
                if column_input.code in config.compositions.bag_rounding_inputs else None)
-        xml = set_cell(xml, plan.total_row, letter,
-                       style=total_style.get(letter) or cell_style(xml, plan.total_row, model),
+        xml = set_cell(xml, plan.total_row, letter, style=estilo_de(total_style, letter),
                        formula=total_formula(letter, layout.quantity_column,
                                              plan.first_row, plan.total_row - 1,
                                              bag_size=bag))
@@ -194,5 +208,50 @@ def write_synthesis(xml: str, plan: SynthPlan, layout: TemplateLayout,
         xml = clear_row(xml, row, body)
         xml = hide_row(xml, row)
 
+    xml = _alargar_colunas_estreitas(xml, plan, layout, config)
     return set_dimension(xml, letters[-1] if letters else layout.quantity_column,
                          plan.total_row)
+
+
+def _render(valor: float, casas: int) -> str:
+    """Quantos caracteres o Excel precisa mostrar, no formato brasileiro."""
+    return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _alargar_colunas_estreitas(xml: str, plan: SynthPlan, layout: TemplateLayout,
+                               config: Config) -> str:
+    """Evita o `#######`: alarga a coluna quando o valor não caberia.
+
+    O estouro aparece na linha de TOTAL, que soma quantidade x coeficiente e
+    por isso é ordens de grandeza maior que os coeficientes — 1.799,61 m2 de
+    alvenaria a 25 tijolos/m2 dá 44.990,25 numa coluna dimensionada para
+    caber "25,0000". A linha de TOTAL ainda é negrito, que ocupa mais que a
+    unidade de largura do Excel, medida na fonte normal.
+
+    A coluna só cresce, nunca encolhe: o desenho do molde é preservado onde
+    já servia.
+    """
+    for letter, column_input in plan.columns:
+        maior = 0
+        for entry in plan.rows:
+            coeficiente = entry.coefficients.get(letter)
+            if coeficiente is not None:
+                maior = max(maior, len(_render(coeficiente.value, 4)))
+        total = sum((entry.quantity or 0) * entry.coefficients[letter].value
+                    for entry in plan.rows if letter in entry.coefficients)
+        if column_input.code in config.compositions.bag_rounding_inputs:
+            total = -(-total // config.compositions.bag_size)      # ROUNDUP
+        maior = max(maior, len(_render(total, 2)))
+
+        necessaria = maior + config.targets.folga_largura
+        atual = _largura_atual(xml, letter)
+        if atual is None or necessaria > atual:
+            xml = set_column_width(xml, letter, width=round(necessaria, 2),
+                                   template=layout.slots[-1])
+    return xml
+
+
+def _largura_atual(xml: str, letter: str) -> float | None:
+    from .ooxml import _column_definition
+    definicao = _column_definition(xml, column_index(letter))
+    return definicao[0] if definicao else None

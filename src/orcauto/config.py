@@ -77,6 +77,10 @@ class TargetConfig:
     insumos_lookup_range: str = "insumos!$A$6:$D$8635"
     # texto da barra colorida acima do cabeçalho, reescrito por aba gerada
     banner_prefix: str = "LEVANTAMENTO - "
+    # a coluna nunca encolhe; só alarga quando o valor não caberia e viraria
+    # `#######`. A folga cobre o negrito da linha de TOTAL, que é mais largo
+    # que a unidade de largura do Excel, medida na fonte normal.
+    folga_largura: float = 3.0
 
 
 @dataclass
