@@ -44,9 +44,12 @@ class Composition:
 class CompositionIndex:
     """Coleção de composições, consultável por código."""
 
-    def __init__(self, compositions: Iterable[Composition], preferred_sheets: list[str] | None = None):
+    def __init__(self, compositions: Iterable[Composition],
+                 preferred_sheets: list[str] | None = None,
+                 warnings: list[str] | None = None):
         self.compositions = list(compositions)
         self.preferred_sheets = preferred_sheets or []
+        self.warnings = list(warnings or [])
         self._by_code: dict[str, list[Composition]] = {}
         for composition in self.compositions:
             self._by_code.setdefault(composition.code, []).append(composition)
@@ -92,11 +95,42 @@ def _is_section(value, keywords) -> str | None:
     return text if any(text.startswith(k) for k in keywords) else None
 
 
+DASHES = "-\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+_WHITESPACE = re.compile(r"[\s\u00a0]+")
+_UNIT_SPLIT = re.compile(rf"\s[{DASHES}]\s")
+
+
+def flatten(text: str) -> str:
+    """Achata o título numa linha só.
+
+    Na Tabela SEINFRA real 61 títulos trazem uma quebra de linha antes da
+    unidade (`'C4933 - HASTE ...\\n - UN'`) e outros trazem tabulações ou uma
+    corrida de espaços. Como `.` do regex não atravessa `\\n`, o título não era
+    reconhecido — e sem título novo os insumos seguintes iam parar na
+    composição anterior.
+    """
+    return _WHITESPACE.sub(" ", text).strip()
+
+
+def _looks_like_title(text: str) -> bool:
+    """Heurística usada só para avisar: código curto seguido de um traço."""
+    head = text.split(" ", 1)[0]
+    return (bool(head) and head[0].isalnum() and head.upper() == head
+            and any(d in text for d in DASHES) and len(head) <= 20)
+
+
 def parse_sheet(rows: Iterable[list], sheet_name: str,
-                config: CompositionConfig | None = None) -> list[Composition]:
+                config: CompositionConfig | None = None,
+                warnings: list[str] | None = None) -> list[Composition]:
     """Lê composições de uma sequência de linhas (lista de valores por célula).
 
     `rows` é qualquer iterável de listas — o que permite testar sem Excel.
+
+    `warnings`, quando informado, recebe um aviso por linha que *parece* título
+    de composição e mesmo assim não foi reconhecida. Antes essa linha era
+    silenciosamente tratada como dado solto e a composição anterior continuava
+    ativa, engolindo os insumos da seguinte: corrupção invisível de dado. O
+    aviso segue o mesmo espírito do log de inserções de `audit.py`.
     """
     config = config or CompositionConfig()
     title_re = re.compile(config.title_re)
@@ -121,18 +155,25 @@ def parse_sheet(rows: Iterable[list], sheet_name: str,
             if keyword:
                 section = keyword
                 continue
-            match = title_re.match(text)
+            flat = flatten(text)
+            match = title_re.match(flat)
             empty_neighbours = not str(cell(desc_i) or "").strip() and not str(cell(unit_i) or "").strip()
             if match and empty_neighbours:
                 code = match.group(1).strip()
                 rest = match.group(2).strip()
                 description, unit = rest, None
-                if " - " in rest:
-                    description, unit = (part.strip() for part in rest.rsplit(" - ", 1))
+                split = _UNIT_SPLIT.split(rest)
+                if len(split) > 1:
+                    description = _UNIT_SPLIT.sub(" - ", " - ".join(split[:-1])).strip()
+                    unit = split[-1].strip()
                 current = Composition(code, description, unit, sheet_name, row_number)
                 found.append(current)
                 section = None
                 continue
+            if warnings is not None and empty_neighbours and not match and _looks_like_title(flat):
+                warnings.append(
+                    f"possível título de composição não reconhecido em "
+                    f"{sheet_name}!A{row_number}: {flat[:120]!r}")
 
         coefficient = cell(coef_i)
         if (current is not None and isinstance(first, str) and first.strip()
@@ -163,13 +204,14 @@ def build_index(workbook, config: CompositionConfig | None = None,
     max_column = max(config.code_column, config.description_column,
                      config.unit_column, config.coefficient_column)
     compositions: list[Composition] = []
+    warnings: list[str] = []
     for name in names:
         if name not in workbook.sheetnames:
             raise ValueError(f"aba de composição inexistente: {name!r}")
         worksheet = workbook[name]
         rows = (values for _, values in _sheet_rows(worksheet, max_column))
-        compositions.extend(parse_sheet(rows, name, config))
-    return CompositionIndex(compositions, preferred_sheets=names)
+        compositions.extend(parse_sheet(rows, name, config, warnings))
+    return CompositionIndex(compositions, preferred_sheets=names, warnings=warnings)
 
 
 def autodetect_sheets(workbook, config: CompositionConfig | None = None) -> list[str]:
@@ -185,7 +227,7 @@ def autodetect_sheets(workbook, config: CompositionConfig | None = None) -> list
             if index > 4000:
                 break
             value = values[config.code_column - 1] if values else None
-            if isinstance(value, str) and title_re.match(value.strip()):
+            if isinstance(value, str) and title_re.match(flatten(value)):
                 hits += 1
         if hits >= config.min_tables_to_autodetect:
             detected.append((hits, name))

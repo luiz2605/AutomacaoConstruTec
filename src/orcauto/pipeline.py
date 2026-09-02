@@ -158,7 +158,8 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
     synth = _synthesize_missing(package, formulas, values, topics, pairs,
                                 index, resolver, config, auditoria)
 
-    audit = Audit(plans, config.targets.suffix, budget_codes, synth)
+    audit = Audit(plans, config.targets.suffix, budget_codes, synth,
+                  warnings=index.warnings)
     if config.rules.write_log_sheet:
         bold = package.append_style(bold=True)
         wrap = package.append_style(wrap=True)

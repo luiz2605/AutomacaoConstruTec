@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 
 from .ooxml import cell_xml
 from .planner import NEW, SUBSTITUTED, UPDATED, SheetPlan
-from .textutil import column_letter
+from .textutil import column_letter, similarity
 
-HEADINGS = ("1)", "2)", "3)", "4)", "5)", "6)", "LEVANTAMENTO")
+HEADINGS = ("1)", "2)", "3)", "4)", "5)", "6)", "7)", "8)", "LEVANTAMENTO")
 
 
 @dataclass
@@ -17,11 +17,46 @@ class Audit:
     suffix: str = " (AUTO)"
     budget_codes: set[str] = field(default_factory=set)
     synth: list = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    # abaixo disto a descricao do PDF e a da composicao sao consideradas
+    # servicos diferentes, e o par codigo/descricao vira divergencia (secao 7)
+    description_min_similarity: float = 0.60
 
     def written_rows(self):
         for plan in self.plans:
             for planned in plan.ordered():
                 yield plan, planned
+
+    def identified_rows(self):
+        """Toda linha gravada, dos dois modos: (aba, item do PDF, composicao)."""
+        for plan in self.plans:
+            for planned in plan.ordered():
+                yield plan.sheet + self.suffix, planned.item, planned.composition
+        for plan in self.synth:
+            if not plan.created:
+                continue
+            for entry in plan.rows:
+                yield plan.sheet, entry.item, entry.composition
+
+    def divergences(self):
+        """Itens cuja descricao no PDF nao bate com a da composicao do codigo.
+
+        O cruzamento e feito por CODIGO; a descricao gravada vem da composicao.
+        Quando as duas discordam, o codigo do orcamento aponta para outro
+        servico na Tabela SEINFRA do arquivo — o item pedido no PDF nao entra na
+        planilha e no lugar dele aparece um servico que o PDF nao pediu. Era o
+        caso do item 2.4 (C0711): o PDF diz "CARGA MECANIZADA DE ENTULHO",
+        a tabela diz "CARGA, DESCARGA E TRANSP. DE TUBOS ... DN 150mm".
+        """
+        for sheet, item, composition in self.identified_rows():
+            pdf_text = (item.description or "").strip()
+            excel_text = (composition.description or "").strip()
+            if not pdf_text or not excel_text:
+                continue
+            score = similarity(pdf_text, excel_text)
+            if score >= self.description_min_similarity:
+                continue
+            yield sheet, item, composition, score
 
 
 def build_rows(audit: Audit) -> list[list]:
@@ -59,6 +94,14 @@ def build_rows(audit: Audit) -> list[list]:
     for plan in audit.plans:
         for skipped in plan.skipped:
             rows.append([plan.sheet + audit.suffix, skipped.item.order, skipped.item.code,
+                         skipped.item.description,
+                         skipped.composition.ref if skipped.composition else "-",
+                         skipped.reason])
+    # abas sintetizadas do molde tambem descartam itens; sem isto a secao 2
+    # saia vazia num arquivo-base, onde TODA aba e sintetizada
+    for plan in audit.synth:
+        for skipped in plan.skipped:
+            rows.append([plan.sheet, skipped.item.order, skipped.item.code,
                          skipped.item.description,
                          skipped.composition.ref if skipped.composition else "-",
                          skipped.reason])
@@ -142,6 +185,25 @@ def build_rows(audit: Audit) -> list[list]:
             rows.append([plan.sheet + audit.suffix, row, service.code or "",
                          service.description or "", service.quantity, situacao])
 
+    rows += [[], ["7) DIVERGENCIA ENTRE A DESCRICAO DO PDF E A DA COMPOSICAO"],
+             ["O cruzamento e por CODIGO e a descricao gravada vem da composicao. Quando as duas "
+              "discordam, o codigo do orcamento aponta para outro servico na tabela do arquivo: "
+              "o servico pedido no PDF nao entra na planilha e no lugar dele aparece um que o PDF "
+              "nao pediu. Confira o codigo no orcamento ou a versao da tabela."],
+             ["ABA", "ITEM PDF", "CODIGO", "DESCRICAO NO PDF", "DESCRICAO GRAVADA (EXCEL)",
+              "COMPOSICAO (ORIGEM)", "SEMELHANCA"]]
+    for sheet, item, composition, score in audit.divergences():
+        rows.append([sheet, item.order, item.code, item.description or "",
+                     composition.description, composition.ref, round(score, 2)])
+
+    rows += [[], ["8) AVISOS DE LEITURA DAS COMPOSICOES"],
+             ["Linhas da aba de composicoes que parecem titulo de tabela e nao foram reconhecidas "
+              "como tal. Enquanto um titulo nao e reconhecido, a composicao anterior continua "
+              "aberta e absorve os insumos que seriam da seguinte."],
+             ["AVISO"]]
+    for warning in audit.warnings:
+        rows.append([warning])
+
     return rows
 
 
@@ -177,6 +239,23 @@ def log_sheet_xml(rows: list[list], bold_style: int, wrap_style: int) -> str:
 def text_report(audit: Audit) -> str:
     """Resumo legível para o terminal."""
     lines: list[str] = []
+    divergentes = list(audit.divergences())
+    if divergentes:
+        lines.append(f"[atencao] {len(divergentes)} item(ns) com descricao divergente entre o PDF "
+                     f"e a composicao do mesmo codigo (secao 7 do log):")
+        for sheet, item, composition, score in divergentes:
+            lines.append(f"   {sheet} item {item.order} {item.code}: "
+                         f"PDF={item.description!r} != EXCEL={composition.description!r} "
+                         f"(semelhanca {score:.2f})")
+        lines.append("")
+    if audit.warnings:
+        lines.append(f"[atencao] {len(audit.warnings)} linha(s) parecem titulo de composicao e nao "
+                     f"foram reconhecidas (secao 8 do log):")
+        for warning in audit.warnings[:10]:
+            lines.append("   " + warning)
+        if len(audit.warnings) > 10:
+            lines.append(f"   ... mais {len(audit.warnings) - 10}")
+        lines.append("")
     for plan in audit.synth:
         if not plan.created:
             lines.append(f"[aba nao criada] topico {plan.topic_number} {plan.topic_name}: {plan.reason}")

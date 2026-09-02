@@ -51,3 +51,64 @@ def test_precedencia_entre_abas_duplicadas(composition_rows):
     index = CompositionIndex(primary + secondary, preferred_sheets=["PRINCIPAL", "ANTIGA"])
     assert index.get("S001").sheet == "PRINCIPAL"
     assert len(index.all("S001")) == 2
+
+
+# ---------------------------------------------------------------------------
+# Bug A do relatório v3 — título não reconhecido derruba a fronteira entre
+# composições. Na Tabela SEINFRA real são 70 títulos: 61 com quebra de linha
+# antes da unidade e 9 sem espaço em volta do traço.
+# ---------------------------------------------------------------------------
+
+def _linhas_com_titulo(titulo: str) -> list[list]:
+    """Duas composições em sequência; a segunda com o título problemático."""
+    return [
+        ["S001 - CHAPISCO DE CIMENTO E AREIA - M2"],
+        ["MATERIAIS", None, "Unidade", "Coeficiente"],
+        ["X001", "CIMENTO", "KG", 2.5],
+        [titulo],
+        ["MATERIAIS", None, "Unidade", "Coeficiente"],
+        ["X009", "PEDRA DE MAO", "M3", 1.15],
+    ]
+
+
+@pytest.mark.parametrize("titulo, motivo", [
+    ("S002 - HASTE DE ATERRAMENTO 5/8\"X 2.40M    \n - UN", "quebra de linha antes da unidade"),
+    ("S002 - PAREDE PRE-MOLDADA, ESP.=13CM,\nINCLUSIVE MONTAGEM - UN", "quebra de linha no meio"),
+    ("S002 - PORTAO NYLOFOR - FORNECIMENTO\t\t\t\t\n - UN", "tabulações antes da unidade"),
+    ("S002- TORNEIRA CROMADA P/ BANCADA - UN", "sem espaço antes do traço"),
+    ("S002 -PAINEL DE LED 4000K 24W - UN", "sem espaço depois do traço"),
+    ("S002 – REFLETOR LED 50W 3000K - UN", "travessão em vez de hífen"),
+])
+def test_titulo_irregular_nao_vaza_insumo_para_a_composicao_anterior(titulo, motivo):
+    """O insumo da segunda composição não pode acabar dentro da primeira."""
+    encontradas = parse_sheet(_linhas_com_titulo(titulo), "COMPOSICOES")
+    codigos = [c.code for c in encontradas]
+    assert codigos == ["S001", "S002"], f"título não reconhecido ({motivo}): {titulo!r}"
+    primeira, segunda = encontradas
+    assert list(primeira.inputs) == ["X001"]         # não engoliu o insumo seguinte
+    assert list(segunda.inputs) == ["X009"]
+    assert segunda.unit == "UN"
+
+
+def test_titulo_com_quebra_de_linha_preserva_descricao_e_unidade():
+    linhas = _linhas_com_titulo(
+        "S002 - PISO INTERTRAVADO (20X10X6)CM - COMPACTACAO MECANIZADA\n - M2")
+    segunda = parse_sheet(linhas, "COMPOSICOES")[1]
+    assert segunda.description == "PISO INTERTRAVADO (20X10X6)CM - COMPACTACAO MECANIZADA"
+    assert segunda.unit == "M2"
+
+
+def test_linha_parecida_com_titulo_e_nao_reconhecida_vira_aviso():
+    """Corrupção silenciosa vira alerta visível — o que o bug A não tinha."""
+    avisos: list[str] = []
+    linhas = [["S001 - CHAPISCO - M2"], ["MATERIAIS", None, "Unidade", "Coeficiente"],
+              ["RELATORIO ANALITICO – COMPOSICOES DE CUSTOS COM PALAVRAS DEMAIS NO CODIGO"]]
+    parse_sheet(linhas, "COMPOSICOES", warnings=avisos)
+    assert len(avisos) == 1
+    assert "COMPOSICOES!A3" in avisos[0]
+
+
+def test_titulo_reconhecido_nao_gera_aviso(composition_rows):
+    avisos: list[str] = []
+    parse_sheet(composition_rows, "COMPOSICOES", warnings=avisos)
+    assert avisos == []

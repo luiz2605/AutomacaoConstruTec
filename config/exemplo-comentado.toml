@@ -15,7 +15,7 @@ line_tolerance = 2.5               # tolerância vertical para agrupar palavras
 
 [compositions]
 sheets = []                        # vazio = detecta as abas sozinho
-title_re = '^([A-Z0-9][A-Z0-9\.\-/]*?)\s+-\s+(.*)$'
+title_re = '^([A-Z0-9][A-Z0-9\.\-/]*?)\s*[-–—]\s*(.*)$'   # traço de qualquer tipo, com ou sem espaço
 section_keywords = ["EQUIPAMENTO", "MAO DE OBRA", "MATERIAIS", "SERVICOS", "TRANSPORTE"]
 code_column = 1
 description_column = 2
@@ -23,6 +23,9 @@ unit_column = 3
 coefficient_column = 4             # a coluna do coeficiente
 service_code_re = '^C'             # insumo que casa vira sub-composição
 max_depth = 3                      # níveis de aninhamento resolvidos
+expand_subservices = true          # false = o sub-serviço com composição própria
+                                   # vira coluna com o coeficiente de 1º nível,
+                                   # em vez de ser aberto nos insumos dele
 min_tables_to_autodetect = 5
 
 [targets]

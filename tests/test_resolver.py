@@ -57,3 +57,55 @@ def test_profundidade_maxima_respeitada(composition_rows):
 def test_formula_respeita_outra_coluna_de_coeficiente(resolver):
     coefficient = resolver.resolve("S001")["X001"]
     assert coefficient.formula(coefficient_column=5) == "'COMPOSICOES'!E5"
+
+
+# ---------------------------------------------------------------------------
+# Bug B do relatório v3 — coluna rotulada com um código de SERVIÇO nunca
+# recebia coeficiente, e a mão de obra de dentro do sub-serviço era somada à
+# da composição-mãe (C3347: SERVENTE 10,0 em vez de 7,0).
+# ---------------------------------------------------------------------------
+
+def test_coluna_de_subservico_recebe_coeficiente_de_primeiro_nivel(resolver):
+    """S002 consome S003 a 0,025 m3/m2; a coluna S003 tem de receber 0,025."""
+    found = resolver.coefficients_for("S002", {"F": "M001", "G": "S003"})
+    assert sorted(found) == ["F", "G"]
+    assert found["G"].value == pytest.approx(0.025)
+    assert found["G"].formula() == "'COMPOSICOES'!D12"
+    assert found["G"].trail() == "S002"
+
+
+def test_subservico_com_coluna_propria_nao_e_aberto_nos_insumos(resolver):
+    """Sem isto o cimento da argamassa entraria também na coluna de cimento."""
+    com_coluna = resolver.coefficients_for("S002", {"F": "X001", "G": "S003"})
+    assert "F" not in com_coluna                     # X001 só vinha de dentro de S003
+    sem_coluna = resolver.coefficients_for("S002", {"F": "X001"})
+    assert sem_coluna["F"].value == pytest.approx(7.3)
+
+
+def test_stop_at_nao_contamina_o_cache(resolver):
+    """O resultado depende de `stop_at`; o cache tem de considerar os dois."""
+    assert "X001" in resolver.resolve("S002")
+    assert "X001" not in resolver.resolve("S002", stop_at=["S003"])
+    assert "X001" in resolver.resolve("S002")
+
+
+def test_mao_de_obra_da_mae_nao_soma_a_do_subservico(composition_rows):
+    """O caso C3347: PEDREIRO da alvenaria + PEDREIRO da argamassa."""
+    linhas = list(composition_rows) + [
+        ["S006 - ALVENARIA DE PEDRA - M3"],
+        ["MAO DE OBRA", None, "Unidade", "Coeficiente"],
+        ["M001", "PEDREIRO", "H", 7.0],
+        ["SERVICOS"],
+        ["S007", "ARGAMASSA", "M3", 0.3],
+        [],
+        ["S007 - ARGAMASSA - M3"],
+        ["MAO DE OBRA", None, "Unidade", "Coeficiente"],
+        ["M001", "PEDREIRO", "H", 10.0],
+    ]
+    index = CompositionIndex(parse_sheet(linhas, "COMPOSICOES"))
+    resolver = Resolver(index, CompositionConfig(service_code_re=r"^S"))
+    aberto = resolver.coefficients_for("S006", {"F": "M001"})
+    assert aberto["F"].value == pytest.approx(10.0)          # 7,0 + 0,3 x 10,0
+    com_coluna = resolver.coefficients_for("S006", {"F": "M001", "G": "S007"})
+    assert com_coluna["F"].value == pytest.approx(7.0)       # só o da alvenaria
+    assert com_coluna["G"].value == pytest.approx(0.3)

@@ -133,7 +133,7 @@ webapp/
 ## Testes
 
 ```bash
-pytest              # 70 testes, ~1s
+pytest              # 146 testes, ~5s
 ```
 
 A suíte é autossuficiente: monta uma pasta Excel e um orçamento sintéticos do
@@ -154,3 +154,24 @@ real (65 mil linhas, ~4.300 composições) o recálculo headless não termina ne
 em 25 minutos. A conferência estrutural — `orcauto check` mais a suíte de
 testes — cobre integridade do pacote e preservação das abas originais, mas não
 substitui abrir o arquivo no Excel uma vez.
+
+## Documentos de apoio
+
+| Arquivo | O que traz |
+|---|---|
+| `AUDITORIA.md` | auditoria de 17/08: erros apontados pelo Luiz, com evidência |
+| `RELATORIO-ERROS-VISUAIS.md` | bordas perdidas, `#######` e conferência de coeficientes |
+| `CORRECOES-V3.md` | bugs A/B/C/D do relatório v3: causa raiz, prova antes/depois e testes |
+
+### Opções que mudam o resultado do levantamento
+
+`compositions.expand_subservices` decide o que acontece quando uma composição
+consome outro serviço que tem composição própria (a alvenaria que consome
+argamassa, a forma que consome fabricação + aplicação):
+
+* `true` (padrão) — o sub-serviço é aberto e só o insumo-folha vira coluna;
+* `false` — o sub-serviço vira uma coluna com o coeficiente de primeiro nível.
+
+As configurações reais do escritório usam `false`: é como a planilha feita à
+mão trabalha (a aba `INFRAESTRUTURA` original tem uma coluna rotulada `C3129`)
+e é o que evita a dupla contagem da mão de obra. Ver `CORRECOES-V3.md`, bug B.

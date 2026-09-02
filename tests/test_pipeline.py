@@ -166,3 +166,57 @@ def test_log_lista_linhas_sem_contrapartida_no_orcamento(workbook_path, topics, 
     assert "5) LINHAS DA ABA SEM CONTRAPARTIDA NO ORCAMENTO" in texto
     assert "S777" in texto
     assert "nao consta em nenhum item do orcamento" in texto
+
+
+# ---------------------------------------------------------------------------
+# Bug D do relatório v3 — o código do PDF aponta para outro serviço na tabela.
+# O item pedido some da planilha e no lugar dele entra um que o PDF não pediu.
+# Antes isso acontecia em silêncio: a descrição gravada vem da composição.
+# ---------------------------------------------------------------------------
+
+def test_descricao_divergente_entre_pdf_e_composicao_vira_aviso(
+        workbook_path, config, tmp_path):
+    """Caso real: o PDF diz que C0711 é CARGA MECANIZADA DE ENTULHO; a tabela
+    do arquivo diz que C0711 é CARGA, DESCARGA E TRANSP. DE TUBOS DN 150mm."""
+    from orcauto.pdf_budget import BudgetItem, Topic
+    trocado = Topic(5, "REVESTIMENTO", [
+        BudgetItem("5.1", "S001", "CARGA MECANIZADA DE ENTULHO EM CAMINHAO",
+                   "M3", 120.0, 1.0, 120.0, 1, 5, "REVESTIMENTO"),
+    ])
+    destino = tmp_path / "divergente.xlsx"
+    resultado = run(workbook_path, None, destino, config, topics=[trocado])
+
+    divergencias = list(resultado.audit.divergences())
+    assert len(divergencias) == 1
+    _, item, composition, score = divergencias[0]
+    assert item.code == "S001"
+    assert composition.description == "CHAPISCO DE CIMENTO E AREIA"
+    assert score < 0.60
+    assert "descricao divergente" in resultado.report
+
+    texto = "\n".join("|".join(str(c) for c in row if c not in (None, ""))
+                      for row in openpyxl.load_workbook(destino)["LOG AUTO"]
+                      .iter_rows(values_only=True))
+    assert "7) DIVERGENCIA ENTRE A DESCRICAO DO PDF E A DA COMPOSICAO" in texto
+    assert "CARGA MECANIZADA DE ENTULHO EM CAMINHAO" in texto
+
+
+def test_descricao_equivalente_nao_vira_aviso(workbook_path, topics, config, tmp_path):
+    resultado = run(workbook_path, None, tmp_path / "ok.xlsx", config, topics=topics)
+    assert list(resultado.audit.divergences()) == []
+
+
+def test_aviso_de_titulo_nao_reconhecido_chega_ao_log(workbook_path, topics, config, tmp_path):
+    """A linha suspeita da aba de composições precisa aparecer na seção 8."""
+    workbook = openpyxl.load_workbook(workbook_path)
+    workbook["COMPOSICOES"]["A30"] = "RELATORIO ANALITICO - COMPOSICOES DE CUSTOS"
+    workbook.save(workbook_path)
+
+    destino = tmp_path / "aviso.xlsx"
+    resultado = run(workbook_path, None, destino, config, topics=topics)
+    assert any("A30" in aviso for aviso in resultado.audit.warnings)
+    texto = "\n".join("|".join(str(c) for c in row if c not in (None, ""))
+                      for row in openpyxl.load_workbook(destino)["LOG AUTO"]
+                      .iter_rows(values_only=True))
+    assert "8) AVISOS DE LEITURA DAS COMPOSICOES" in texto
+    assert "RELATORIO ANALITICO" in texto

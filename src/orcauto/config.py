@@ -39,7 +39,11 @@ class PdfConfig:
 class CompositionConfig:
     """Onde e como ler as tabelas de composição de custo."""
     sheets: list[str] = field(default_factory=list)   # vazio = detecta sozinho
-    title_re: str = r"^([A-Z0-9][A-Z0-9\.\-/]*?)\s+-\s+(.*)$"
+    # O separador aceita qualquer variante de traço e dispensa o espaço em volta:
+    # na Tabela SEINFRA real há 70 títulos escritos como "CPC0012- DESCRIÇÃO" ou
+    # com quebra de linha antes da unidade. Sem isso o título não é reconhecido e
+    # os insumos dele vazam para a composição anterior (bug A do relatório v3).
+    title_re: str = r"^([A-Z0-9][A-Z0-9\.\-/]*?)\s*[-\u2010\u2011\u2012\u2013\u2014\u2015\u2212]\s*(.*)$"
     section_keywords: tuple[str, ...] = (
         "EQUIPAMENTO", "MAO DE OBRA", "MATERIAIS", "SERVICOS", "TRANSPORTE",
     )
@@ -49,6 +53,13 @@ class CompositionConfig:
     coefficient_column: int = 4
     service_code_re: str = r"^C"          # insumo que casa vira sub-composição
     max_depth: int = 3
+    # True  = uma coluna por insumo-FOLHA; o sub-serviço é aberto e some.
+    # False = o sub-serviço com composição própria vira ele mesmo uma coluna,
+    #         com o coeficiente de primeiro nível — que é como a planilha feita
+    #         à mão faz (a aba INFRAESTRUTURA real tem uma coluna C3129).
+    #         Evita a dupla contagem: a mão de obra de dentro da argamassa
+    #         deixa de ser somada à mão de obra da alvenaria.
+    expand_subservices: bool = True
     # insumos cotados em KG mas comprados em saco: o TOTAL da coluna recebe
     # ROUNDUP(.../tamanho do saco). Não dá para inferir só pela unidade — a
     # Tabela SEINFRA não diz o que é ensacado —, então é lista explícita.

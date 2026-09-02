@@ -6,6 +6,17 @@
 # Fixar as duas abas corretas evita depender da ordem de precedência.
 sheets = ["COMPOSIÇÃO TAB 28", "COMPOSIÇÃO PROPRIAS"]
 
+# --- sub-serviço vira coluna (relatório de erros v3) ----------------------
+# Com `true` (padrão histórico) o resolvedor abre todo sub-serviço e só o
+# insumo-folha vira coluna. Isso somava a mão de obra de dentro da argamassa
+# à mão de obra da alvenaria (C3347: SERVENTE 10,0 em vez de 7,0; C4592:
+# 12,2 em vez de 9,2; C4301: CARPINTEIRO 1,10 em vez de 0,25) e fazia sumir a
+# coluna da própria argamassa. Com `false`, o sub-serviço com composição
+# própria vira uma coluna com o coeficiente de primeiro nível — que é como a
+# planilha feita à mão faz (a aba INFRAESTRUTURA original tem uma coluna
+# rotulada C3129, que hoje nunca receberia valor).
+expand_subservices = false
+
 [targets]
 # Tópicos 3, 5 e 14 casam sozinhos com INFRAESTRUTURA, PAREDES e REVESTIMENTOS.
 

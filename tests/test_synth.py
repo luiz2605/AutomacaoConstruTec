@@ -453,3 +453,61 @@ def test_coluna_larga_o_bastante_nao_encolhe(template_workbook_path, tmp_path):
 
     _, sheet = _gerar(template_workbook_path, _muitos_itens(), tmp_path)
     assert sheet.column_dimensions["F"].width == 40.0           # desenho preservado
+
+
+# ---------------------------------------------------------------------------
+# Bug B do relatório v3, no modo de síntese: com `expand_subservices = false`
+# o sub-serviço com composição própria vira coluna, com o coeficiente de
+# primeiro nível, em vez de ser aberto nos insumos dele.
+# ---------------------------------------------------------------------------
+
+def test_subservico_vira_coluna_quando_a_expansao_esta_desligada(resolver, topics):
+    index, resolve = resolver
+    codigos = [c.code for c in topic_inputs(topics[0].items, index, resolve,
+                                            expand_subservices=False)]
+    assert "S003" in codigos                       # a coluna de ARGAMASSA existe
+    assert "X002" in codigos                       # areia, que S001/S005 usam direto
+    coluna = {c.code: c for c in topic_inputs(topics[0].items, index, resolve,
+                                              expand_subservices=False)}["S003"]
+    assert coluna.description == "ARGAMASSA DE CIMENTO E AREIA"
+    assert "S002" in coluna.used_by
+
+
+def test_aba_gerada_sem_expansao_traz_o_coeficiente_de_primeiro_nivel(
+        template_workbook_path, topics, tmp_path):
+    """Sem a dupla contagem: o cimento da argamassa deixa de somar no cimento."""
+    from orcauto.pipeline import run
+    config = Config(compositions=CompositionConfig(sheets=["COMPOSICOES"],
+                                                   service_code_re=r"^S",
+                                                   expand_subservices=False),
+                    targets=TargetConfig(template_sheet="MODELO BASE"))
+    destino = tmp_path / "sem-expansao.xlsx"
+    resultado = run(template_workbook_path, None, destino, config, topics=topics)
+    workbook = openpyxl.load_workbook(destino)
+    sheet = workbook["REVESTIMENTO"]
+    colunas = {codigo: letra for letra, codigo in
+               ((letra, coluna.code) for letra, coluna in resultado.synth[0].columns)}
+    assert "S003" in colunas
+    letra = colunas["S003"]
+    # linha 11 = item S002, que consome S003 a 0,025
+    assert sheet[f"{letra}11"].value == "='COMPOSICOES'!D12"
+    # e o cimento de S002 (que só vinha de dentro de S003) fica vazio
+    assert sheet[f"{colunas['X001']}11"].value is None
+
+
+def test_item_nao_aplicado_em_aba_sintetizada_aparece_na_secao_2_do_log(
+        template_workbook_path, topics, tmp_path):
+    """Num arquivo-base TODA aba é sintetizada; a seção 2 saía sempre vazia."""
+    from orcauto.pipeline import run
+    config = Config(compositions=CompositionConfig(sheets=["COMPOSICOES"],
+                                                   service_code_re=r"^S"),
+                    targets=TargetConfig(template_sheet="MODELO BASE"))
+    destino = tmp_path / "log.xlsx"
+    run(template_workbook_path, None, destino, config, topics=topics)
+    linhas = list(openpyxl.load_workbook(destino)["LOG AUTO"].iter_rows(values_only=True))
+    texto = "\n".join("|".join(str(c) for c in row if c not in (None, "")) for row in linhas)
+    inicio = texto.index("2) ITENS DO ORCAMENTO NAO APLICADOS")
+    fim = texto.index("3) RESOLUCAO DE DUPLICIDADE")
+    secao = texto[inicio:fim]
+    assert "S999" in secao                     # item 5.4, sem composição
+    assert "composição não encontrada no arquivo" in secao
