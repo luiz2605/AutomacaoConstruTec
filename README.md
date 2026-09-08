@@ -175,3 +175,34 @@ argamassa, a forma que consome fabricação + aplicação):
 As configurações reais do escritório usam `false`: é como a planilha feita à
 mão trabalha (a aba `INFRAESTRUTURA` original tem uma coluna rotulada `C3129`)
 e é o que evita a dupla contagem da mão de obra. Ver `CORRECOES-V3.md`, bug B.
+
+## Autenticação da aplicação web
+
+O endereço é público, então as rotas que mostram ou entregam dado de orçamento
+(`/`, `/processar`, `/estado/{id}`, `/baixar/{id}`) exigem **HTTP Basic**.
+`GET /saude` fica aberta de propósito: é o health check do Render e não devolve
+nada além do estado do serviço.
+
+| Variável | Obrigatória | Padrão |
+|---|---|---|
+| `ORCAUTO_USUARIO` | não | `orcamentos` |
+| `ORCAUTO_SENHA` | **sim** | — |
+
+Sem `ORCAUTO_SENHA` o servidor responde **503** ("Autenticação não configurada
+no servidor") em vez de 401 — um deploy mal configurado diz o que está errado,
+e em nenhuma hipótese fica aberto. Credencial errada responde 401 com
+`WWW-Authenticate: Basic`, que é o que faz o navegador abrir a caixa de login.
+
+Use senha **só com caracteres ASCII**: o cabeçalho Basic é decodificado como
+ASCII, então uma senha acentuada nunca chega inteira ao servidor.
+
+Local:
+
+```bash
+export ORCAUTO_USUARIO=orcamentos
+export ORCAUTO_SENHA='uma-senha-boa'
+uvicorn webapp.app:app --reload
+```
+
+No Render, `ORCAUTO_SENHA` está declarada em `render.yaml` com `sync: false`:
+o valor é digitado no painel e nunca entra no repositório. Ver `.env.example`.

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import tempfile
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
 from starlette.requests import Request
@@ -25,9 +27,48 @@ app = FastAPI(title="ConstruTec — Levantamento automático", docs_url=None, re
 templates = Jinja2Templates(directory=str(PASTA / "templates"))
 fila = Fila()
 
+# ---------------------------------------------------------------------------
+# Autenticação
+#
+# O endereço passa a ser público (Render), então toda rota que mostra ou
+# entrega dado de orçamento exige login. A senha vive só na variável de
+# ambiente `ORCAUTO_SENHA` — nunca no repositório.
+#
+# `auto_error=False`: sem isso, uma requisição sem credenciais receberia 401
+# antes de esta função rodar, e um servidor publicado SEM a senha configurada
+# ficaria pedindo login para sempre, sem nunca dizer que o problema é de
+# configuração. Com o controle na mão, dá para distinguir "não configurado"
+# (503) de "credencial errada" (401).
+# ---------------------------------------------------------------------------
+security = HTTPBasic(auto_error=False)
+DESAFIO = {"WWW-Authenticate": "Basic"}
+
+
+def exigir_login(credenciais: HTTPBasicCredentials | None = Depends(security)) -> str:
+    usuario_esperado = os.environ.get("ORCAUTO_USUARIO", "orcamentos")
+    senha_esperada = os.environ.get("ORCAUTO_SENHA")
+    if not senha_esperada:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Autenticação não configurada no servidor.")
+    if credenciais is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais inválidas",
+                            headers=DESAFIO)
+    # compare_digest em bytes: em str ele recusa caractere fora do ASCII, e uma
+    # senha com acento derrubaria a rota com 500 em vez de responder 401.
+    # Os dois lados são comparados sempre, para não vazar por tempo de resposta
+    # se o que errou foi o usuário ou a senha.
+    usuario_ok = secrets.compare_digest(credenciais.username.encode("utf-8"),
+                                        usuario_esperado.encode("utf-8"))
+    senha_ok = secrets.compare_digest(credenciais.password.encode("utf-8"),
+                                      senha_esperada.encode("utf-8"))
+    if not (usuario_ok and senha_ok):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais inválidas",
+                            headers=DESAFIO)
+    return credenciais.username
+
 
 @app.get("/", response_class=HTMLResponse)
-def pagina(request: Request):
+def pagina(request: Request, usuario: str = Depends(exigir_login)):
     try:
         caminho_base()
         indisponivel = None
@@ -40,7 +81,8 @@ def pagina(request: Request):
 
 
 @app.post("/processar")
-async def processar(arquivo: UploadFile):
+async def processar(arquivo: UploadFile,
+                    usuario: str = Depends(exigir_login)):
     if not (arquivo.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "Envie o orçamento em PDF. Outros formatos não são lidos.")
 
@@ -72,7 +114,7 @@ async def processar(arquivo: UploadFile):
 
 
 @app.get("/estado/{job_id}")
-def estado(job_id: str):
+def estado(job_id: str, usuario: str = Depends(exigir_login)):
     job = fila.obter(job_id)
     if job is None:
         raise HTTPException(404, "Este processamento expirou. Envie o PDF de novo.")
@@ -80,7 +122,7 @@ def estado(job_id: str):
 
 
 @app.get("/baixar/{job_id}")
-def baixar(job_id: str):
+def baixar(job_id: str, usuario: str = Depends(exigir_login)):
     job = fila.obter(job_id)
     if job is None:
         raise HTTPException(404, "Este processamento expirou. Envie o PDF de novo.")
@@ -99,6 +141,8 @@ def baixar(job_id: str):
 
 @app.get("/saude")
 def saude():
+    """Sem autenticação de propósito: é o health check do Render e não
+    devolve nada de orçamento — só se a planilha-base está no lugar."""
     try:
         base = caminho_base()
         pronto = True

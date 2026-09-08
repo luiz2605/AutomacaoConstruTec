@@ -10,14 +10,23 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient           # noqa: E402
 
+USUARIO, SENHA = "orcamentos", "senha-de-teste"
+
 
 @pytest.fixture
 def cliente(template_workbook_path, topics, monkeypatch, tmp_path):
-    """Sobe a aplicação com a base sintética e o orçamento já interpretado."""
+    """Sobe a aplicação com a base sintética e o orçamento já interpretado.
+
+    O cliente já vai autenticado: as rotas de orçamento exigem login, e o que
+    estes testes conferem é o comportamento *depois* dele. A autenticação em si
+    tem os seus próprios testes no fim do arquivo.
+    """
     from webapp import app as modulo
     from webapp import service
 
     monkeypatch.setenv(service.BASE_ENV, str(template_workbook_path))
+    monkeypatch.setenv("ORCAUTO_USUARIO", USUARIO)
+    monkeypatch.setenv("ORCAUTO_SENHA", SENHA)
 
     from orcauto.config import CompositionConfig, Config, TargetConfig
     config = Config(compositions=CompositionConfig(sheets=["COMPOSICOES"],
@@ -32,7 +41,17 @@ def cliente(template_workbook_path, topics, monkeypatch, tmp_path):
                         lambda base, pdf, destino, cfg: pipeline_run(
                             base, None, destino, cfg, topics=topics))
     modulo.fila.__init__()
-    return TestClient(modulo.app), modulo.fila
+    client = TestClient(modulo.app)
+    client.auth = (USUARIO, SENHA)
+    return client, modulo.fila
+
+
+@pytest.fixture
+def cliente_anonimo(cliente):
+    """O mesmo aplicativo, sem credenciais nenhuma."""
+    client, fila = cliente
+    anonimo = TestClient(client.app)
+    return anonimo, fila
 
 
 def _esperar(cliente, job_id, limite=30):
@@ -147,3 +166,107 @@ def test_trabalho_expirado_e_removido(cliente):
     fila.vida_util = -1
     assert fila.limpar_expirados() >= 1
     assert client.get(f"/estado/{job_id}").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Autenticação — o endereço passa a ser público, então toda rota que mostra ou
+# entrega dado de orçamento precisa de login.
+# ---------------------------------------------------------------------------
+
+ROTAS_PROTEGIDAS = [
+    ("get", "/"),
+    ("post", "/processar"),
+    ("get", "/estado/qualquer"),
+    ("get", "/baixar/qualquer"),
+]
+
+
+@pytest.mark.parametrize("metodo, rota", ROTAS_PROTEGIDAS)
+def test_sem_credenciais_recusa_com_401(cliente_anonimo, metodo, rota):
+    client, _ = cliente_anonimo
+    resposta = getattr(client, metodo)(rota)
+    assert resposta.status_code == 401, rota
+    # sem o desafio o navegador não abre a caixa de login
+    assert resposta.headers.get("www-authenticate") == "Basic"
+
+
+@pytest.mark.parametrize("metodo, rota", ROTAS_PROTEGIDAS)
+def test_credenciais_erradas_recusam_com_401(cliente_anonimo, metodo, rota):
+    client, _ = cliente_anonimo
+    client.auth = (USUARIO, "senha-errada")
+    assert getattr(client, metodo)(rota).status_code == 401, rota
+    client.auth = ("outro-usuario", SENHA)
+    assert getattr(client, metodo)(rota).status_code == 401, rota
+
+
+def test_credenciais_certas_liberam_o_fluxo_completo(cliente):
+    """Com login, tudo se comporta exatamente como antes da autenticação."""
+    client, _ = cliente
+    assert client.get("/").status_code == 200
+
+    envio = client.post("/processar",
+                        files={"arquivo": ("ORC.pdf", b"%PDF-1.4 fake", "application/pdf")})
+    assert envio.status_code == 202
+    job_id = envio.json()["id"]
+
+    corpo = _esperar(client, job_id)
+    assert corpo["estado"] == "pronto", corpo.get("erro")
+    baixado = client.get(f"/baixar/{job_id}")
+    assert baixado.status_code == 200 and baixado.content[:2] == b"PK"
+
+
+@pytest.mark.parametrize("metodo, rota", ROTAS_PROTEGIDAS)
+def test_sem_senha_no_ambiente_responde_503_e_nao_401(cliente_anonimo, monkeypatch,
+                                                      metodo, rota):
+    """Servidor mal configurado tem de dizer isso, não fingir senha errada."""
+    client, _ = cliente_anonimo
+    monkeypatch.delenv("ORCAUTO_SENHA", raising=False)
+    client.auth = (USUARIO, SENHA)
+    resposta = getattr(client, metodo)(rota)
+    assert resposta.status_code == 503, rota
+    assert "não configurada" in resposta.json()["detail"]
+
+
+def test_sem_senha_no_ambiente_nao_abre_a_rota(cliente_anonimo, monkeypatch):
+    """Sem senha configurada e sem credenciais: recusa, nunca libera."""
+    client, _ = cliente_anonimo
+    monkeypatch.delenv("ORCAUTO_SENHA", raising=False)
+    assert client.get("/").status_code == 503
+
+
+def test_saude_responde_sem_login(cliente_anonimo):
+    """É o health check do Render e não devolve nada de orçamento."""
+    client, _ = cliente_anonimo
+    resposta = client.get("/saude")
+    assert resposta.status_code == 200
+    assert resposta.json()["ok"] is True
+
+
+def test_saude_responde_mesmo_sem_senha_configurada(cliente_anonimo, monkeypatch):
+    client, _ = cliente_anonimo
+    monkeypatch.delenv("ORCAUTO_SENHA", raising=False)
+    assert client.get("/saude").status_code == 200
+
+
+def test_usuario_padrao_quando_a_variavel_nao_e_declarada(cliente_anonimo, monkeypatch):
+    """`ORCAUTO_USUARIO` é opcional; sem ela vale 'orcamentos'."""
+    client, _ = cliente_anonimo
+    monkeypatch.delenv("ORCAUTO_USUARIO", raising=False)
+    client.auth = ("orcamentos", SENHA)
+    assert client.get("/").status_code == 200
+
+
+def test_senha_com_acento_no_ambiente_recusa_sem_derrubar_a_rota(cliente_anonimo,
+                                                                 monkeypatch):
+    """Senha com acento não funciona em HTTP Basic — mas tem de dar 401, não 500.
+
+    O cabeçalho Basic é decodificado como ASCII pelo FastAPI, então uma senha
+    acentuada nunca chega inteira. O risco real era outro: `compare_digest` em
+    `str` levanta TypeError com caractere fora do ASCII, e o operador que
+    configurasse `ORCAUTO_SENHA=produção` derrubaria toda requisição com 500.
+    Comparando em bytes, a resposta é uma recusa limpa.
+    """
+    client, _ = cliente_anonimo
+    monkeypatch.setenv("ORCAUTO_SENHA", "produção-2026")
+    client.auth = (USUARIO, "producao-2026")
+    assert client.get("/").status_code == 401

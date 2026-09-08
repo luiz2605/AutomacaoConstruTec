@@ -1,13 +1,20 @@
 services:
   - type: web
-    name: orcauto
+    name: orcauto-web
     runtime: python
     plan: free            # 512 MB — o pico medido é ~180 MB
+    # `pip install -e .` é obrigatório: o pacote mora em `src/orcauto/`, e sem
+    # instalá-lo o `from orcauto import Config` de webapp/service.py não
+    # resolve. Só o requirements.txt não basta.
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: uvicorn webapp.app:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 120
-    healthCheckPath: /saude
+    healthCheckPath: /saude       # rota sem autenticação, de propósito
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
       - key: ORCAUTO_MAX_MB
         value: "40"
+      - key: ORCAUTO_USUARIO
+        value: orcamentos
+      - key: ORCAUTO_SENHA
+        sync: false       # digitada no painel do Render; nunca no repositório
