@@ -100,6 +100,9 @@ def sanitize_sheet_name(name: str, taken: set[str] | None = None,
         space = cut.rfind(" ")
         # só corta na palavra se ainda sobrar nome reconhecível
         cleaned = cut[:space].rstrip() if space >= limit * 0.6 else cut.rstrip()
+        # o corte costuma cair logo depois de um traço ("PAREDE OESTE PISCINA -"),
+        # e a pontuação órfã faz o nome parecer defeito de geração
+        cleaned = cleaned.rstrip(" -–—,.;:/").strip() or "ABA"
 
     if cleaned not in taken:
         return cleaned

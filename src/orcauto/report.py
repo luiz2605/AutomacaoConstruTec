@@ -8,7 +8,7 @@ from .ooxml import cell_xml
 from .planner import NEW, SUBSTITUTED, UPDATED, SheetPlan
 from .textutil import column_letter, similarity
 
-HEADINGS = ("1)", "2)", "3)", "4)", "5)", "6)", "7)", "8)", "LEVANTAMENTO")
+HEADINGS = ("1)", "2)", "3)", "4)", "5)", "6)", "7)", "8)", "9)", "LEVANTAMENTO")
 
 
 @dataclass
@@ -18,9 +18,12 @@ class Audit:
     budget_codes: set[str] = field(default_factory=set)
     synth: list = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    matches: list = field(default_factory=list)
     # abaixo disto a descricao do PDF e a da composicao sao consideradas
     # servicos diferentes, e o par codigo/descricao vira divergencia (secao 7)
     description_min_similarity: float = 0.60
+    description_match_high: float = 0.85
+    description_match_min: float = 0.60
 
     def written_rows(self):
         for plan in self.plans:
@@ -196,6 +199,24 @@ def build_rows(audit: Audit) -> list[list]:
         rows.append([sheet, item.order, item.code, item.description or "",
                      composition.description, composition.ref, round(score, 2)])
 
+    if audit.matches:
+        rows += [[], ["9) CASAMENTO POR DESCRICAO (orcamento sem coluna de codigo)"],
+                 ["Este orcamento nao traz codigo de servico, entao cada item foi ligado a uma "
+                  "composicao pela semelhanca das descricoes. Acima de "
+                  f"{audit.description_match_high:.2f} o texto e praticamente o mesmo e o "
+                  f"casamento foi aceito direto; entre {audit.description_match_min:.2f} e esse "
+                  "valor esta marcado CONFERIR e precisa de olho humano."],
+                 ["TOPICO", "ITEM", "DESCRICAO NO PDF", "MELHOR CANDIDATO",
+                  "CODIGO APLICADO", "DESCRICAO DO CANDIDATO (EXCEL)",
+                  "SEMELHANCA", "SITUACAO"]]
+        for match in sorted(audit.matches, key=lambda m: m.score):
+            rows.append([f"{match.topic_number} {match.topic_name}", match.order,
+                         match.description,
+                         match.composition.ref if match.composition else "-",
+                         match.code,
+                         match.composition.description if match.composition else "",
+                         round(match.score, 3), match.situation])
+
     rows += [[], ["8) AVISOS DE LEITURA DAS COMPOSICOES"],
              ["Linhas da aba de composicoes que parecem titulo de tabela e nao foram reconhecidas "
               "como tal. Enquanto um titulo nao e reconhecido, a composicao anterior continua "
@@ -239,6 +260,18 @@ def log_sheet_xml(rows: list[list], bold_style: int, wrap_style: int) -> str:
 def text_report(audit: Audit) -> str:
     """Resumo legível para o terminal."""
     lines: list[str] = []
+    conferir = [m for m in audit.matches if m.needs_review]
+    sem_par = [m for m in audit.matches if not m.accepted]
+    if audit.matches:
+        aceitos = sum(1 for m in audit.matches if m.accepted)
+        lines.append(f"[descricao] orcamento sem coluna de codigo: {aceitos}/{len(audit.matches)} "
+                     f"itens casados por semelhanca de descricao "
+                     f"({len(conferir)} para conferir, {len(sem_par)} sem par)")
+        for match in sorted(conferir + sem_par, key=lambda m: m.score):
+            alvo = match.composition.description if match.composition else "-"
+            lines.append(f"   {match.situation:<52} {match.score:.2f}  item {match.order:>6} "
+                         f"{match.description[:44]!r} -> {alvo[:44]!r}")
+        lines.append("")
     divergentes = list(audit.divergences())
     if divergentes:
         lines.append(f"[atencao] {len(divergentes)} item(ns) com descricao divergente entre o PDF "

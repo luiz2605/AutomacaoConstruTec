@@ -32,3 +32,11 @@ def test_similarity_reconhece_servico_equivalente():
 def test_colunas():
     assert column_letter(1) == "A" and column_letter(27) == "AA"
     assert column_index("A") == 1 and column_index("AA") == 27
+
+
+def test_nome_de_aba_cortado_nao_termina_em_pontuacao():
+    """"PAREDE OESTE PISCINA - RECONSTRUÇÃO..." não pode virar "... PISCINA -"."""
+    from orcauto.textutil import sanitize_sheet_name
+    nome = sanitize_sheet_name("PAREDE OESTE PISCINA - RECONSTRUÇÃO - UNICATÓLICA")
+    assert nome == "PAREDE OESTE PISCINA"
+    assert len(nome) <= 31

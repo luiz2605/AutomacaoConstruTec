@@ -33,6 +33,19 @@ class PdfConfig:
     trailing_numbers: int = 3
     header_words: tuple[str, ...] = ("Ordem", "Código", "Descrição", "Unidade")
     line_tolerance: float = 2.5
+    # ---- perfil "planilha exportada" -------------------------------------
+    # Segundo formato: PLANILHA ORÇAMENTÁRIA exportada do Excel. Não tem coluna
+    # Código, o tópico não traz valor na própria linha (vem num SUBTOTAL, depois
+    # de todos os itens) e a numeração mistura ponto e vírgula no mesmo arquivo.
+    # Campos separados de propósito: o perfil analítico não muda em nada.
+    planilha_topic_re: str = r"^\d+[.,]0+$"      # "1.00", "3,00"
+    planilha_order_re: str = r"^\d+[.,]\d+$"     # "2.01", "4,01"
+    planilha_order_max_x: float = 60.0           # coluna Item, encostada à esquerda
+    planilha_value_min_x: float = 355.0          # daqui p/ a direita: Un. e números
+    planilha_orphan_max_gap: float = 14.0        # distância vertical p/ adotar órfã
+    planilha_noise_words: tuple[str, ...] = ("SUBTOTAL", "TOTAL", "BDI", "Item")
+    # token que denuncia o formato analítico: ele tem coluna Código, o outro não
+    code_header_words: tuple[str, ...] = ("CODIGO", "CODE")
 
 
 @dataclass
@@ -112,6 +125,15 @@ class RulesConfig:
     # em linha ATUALIZADA, preenche unidade/descrição que estejam vazias ou em
     # erro (#REF!), sem jamais sobrescrever conteúdo aproveitável
     fill_empty_identity: bool = True
+    # ---- casamento por descrição (orçamento sem coluna Código) -----------
+    # "sem_codigo" (padrão): só o item que chega sem código nenhum. É o que
+    #   torna a Planilha Orçamentária utilizável sem tocar no formato analítico,
+    #   onde todo item tem código e o resultado já está validado.
+    # "sempre": também tenta quando o código existe mas não está no índice.
+    # "nunca": desliga.
+    description_match: str = "sem_codigo"
+    description_match_high: float = 0.85     # daqui para cima, aceita direto
+    description_match_min: float = 0.60      # entre os dois, aceita e sinaliza
     write_log_sheet: bool = True
     log_sheet_name: str = "LOG AUTO"
 

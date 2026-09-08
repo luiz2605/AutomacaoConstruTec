@@ -51,6 +51,11 @@
   .link{display:block;text-align:center;margin-top:14px;color:var(--suave);
         font-size:.9rem;cursor:pointer;text-decoration:underline;background:none;border:0;width:100%}
   ul{margin:8px 0 0;padding-left:20px;font-size:.88rem;color:var(--suave)}
+  /* o cartão não tinha campo de texto; herda as mesmas variáveis do resto */
+  textarea{width:100%;margin-top:12px;padding:11px;border-radius:9px;resize:vertical;
+           border:1px solid var(--linha);background:var(--fundo);color:var(--tinta);
+           font:inherit;font-size:.92rem;min-height:104px}
+  textarea:focus{outline:2px solid var(--marca);outline-offset:-1px}
 </style>
 </head>
 <body>
@@ -89,12 +94,29 @@
     <div id="avisos"></div>
     <button id="baixar">Baixar planilha</button>
     <button class="link" id="denovo">Enviar outro orçamento</button>
+    {% if relato_disponivel %}
+    <button class="link relato-abrir" type="button">Relatar um problema</button>
+    {% endif %}
   </div>
 
   <div id="falhou" class="oculto">
     <div class="aviso erro" id="mensagem_erro"></div>
     <button class="link" id="tentar">Tentar de novo</button>
+    {% if relato_disponivel %}
+    <button class="link relato-abrir" type="button">Relatar um problema</button>
+    {% endif %}
   </div>
+
+  {% if relato_disponivel %}
+  <!-- Um bloco só, fora do rodízio de telas do `mostrar()`: serve tanto à tela
+       de resultado quanto à de erro, sem duplicar marcação. -->
+  <div id="relato" class="oculto">
+    <textarea id="relato_texto"
+              placeholder="O que está errado? Se puder, diga em que aba e em que item você viu o problema."></textarea>
+    <button id="relato_enviar" type="button">Enviar relato</button>
+    <div id="relato_aviso"></div>
+  </div>
+  {% endif %}
   {% endif %}
 </main>
 
@@ -185,6 +207,55 @@ if (form) {
   const recomecar = () => { location.reload(); };
   $("denovo").addEventListener("click", recomecar);
   $("tentar").addEventListener("click", recomecar);
+
+  // ---- relato de problema
+  const relato = $("relato");
+  if (relato) {
+    const aviso = $("relato_aviso");
+    const botao = $("relato_enviar");
+    const texto = $("relato_texto");
+
+    document.querySelectorAll(".relato-abrir").forEach(link =>
+      link.addEventListener("click", () => {
+        relato.classList.remove("oculto");
+        aviso.innerHTML = "";
+        texto.focus();
+      }));
+
+    botao.addEventListener("click", async () => {
+      if (!texto.value.trim()) {
+        aviso.innerHTML = '<div class="aviso erro">Descreva o problema antes de enviar.</div>';
+        return texto.focus();
+      }
+      const dados = new FormData();
+      dados.append("descricao", texto.value);
+      // o job_id dá ao suporte o arquivo, o estado e o erro exato do
+      // processamento — coisas que o funcionário não teria como digitar
+      if (jobId) dados.append("job_id", jobId);
+      botao.disabled = true;
+      botao.textContent = "Enviando…";
+      try {
+        const resposta = await fetch("/relatar", {method: "POST", body: dados});
+        const corpo = await resposta.json().catch(() => ({}));
+        if (resposta.ok) {
+          relato.classList.add("oculto");
+          aviso.innerHTML = "";
+          document.querySelectorAll(".relato-abrir").forEach(link => {
+            link.textContent = "Relato enviado — obrigado";
+            link.disabled = true;
+          });
+          return;
+        }
+        aviso.innerHTML = '<div class="aviso erro"></div>';
+        aviso.firstChild.textContent = corpo.detail || "Não foi possível enviar o relato.";
+      } catch (erro) {
+        aviso.innerHTML = '<div class="aviso erro">Não foi possível falar com o servidor.</div>';
+      } finally {
+        botao.disabled = false;
+        botao.textContent = "Enviar relato";
+      }
+    });
+  }
 }
 </script>
 </body>

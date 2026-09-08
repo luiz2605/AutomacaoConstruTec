@@ -206,3 +206,74 @@ uvicorn webapp.app:app --reload
 
 No Render, `ORCAUTO_SENHA` está declarada em `render.yaml` com `sync: false`:
 o valor é digitado no painel e nunca entra no repositório. Ver `.env.example`.
+
+## Relato de problema pela tela
+
+Nas telas de resultado e de erro aparece um link **"Relatar um problema"**: o
+funcionário descreve o que viu e o texto vai por e-mail para o suporte, sem
+precisar saber endereço de ninguém. Junto vai o contexto que ele não teria como
+digitar — usuário, `job_id`, nome do arquivo enviado, estado do processamento e
+a mensagem de erro exata, quando houve.
+
+O PDF **não** é anexado: ele é apagado do servidor assim que o processamento
+termina (`jobs.py::executar`), então não há o que anexar. Se o suporte precisar
+do arquivo, pede ao funcionário.
+
+| Variável | Obrigatória | Padrão |
+|---|---|---|
+| `ORCAUTO_SMTP_HOST` | sim | — |
+| `ORCAUTO_SMTP_PORTA` | não | `465` (SSL) |
+| `ORCAUTO_SMTP_USUARIO` | sim | — (também é o remetente) |
+| `ORCAUTO_SMTP_SENHA` | sim | — |
+| `ORCAUTO_EMAIL_SUPORTE` | sim | — (destinatário) |
+
+Faltando qualquer uma delas o recurso simplesmente não é oferecido: o link não
+aparece na tela e a rota `/relatar` responde **503**. O resto da aplicação segue
+funcionando normalmente. Quando o envio é tentado e o servidor de e-mail recusa
+ou não responde, a resposta é **502** — falha temporária, não erro de quem
+escreveu.
+
+Na maioria dos provedores use uma **senha de aplicativo**, não a senha da conta.
+
+## Dois formatos de PDF
+
+O programa reconhece sozinho qual dos dois formatos chegou, olhando o cabeçalho
+da tabela na primeira página. O funcionário arrasta o PDF e pronto — não existe
+seleção de formato na tela.
+
+| | **Orçamento Analítico** | **Planilha Orçamentária** |
+|---|---|---|
+| Colunas | `Ordem \| Código \| Descrição \| Unidade \| Quantidade \| Preço \| Total` | `Item \| Descrição \| Un. \| Quant. \| Preço \| Subtotal \| Perc.` |
+| Coluna Código | sim | **não** |
+| Valor do tópico | na própria linha do tópico | numa linha `SUBTOTAL`, depois dos itens |
+| Numeração | `3.2` | `2.01` e `4,01` — ponto e vírgula no mesmo arquivo |
+| Casamento | por código | por descrição |
+| Função | `parse_budget` | `parse_budget_planilha_excel` |
+
+São dois leitores separados de propósito. O analítico está em uso e validado; a
+suíte tem um teste dedicado provando que ele sai **idêntico** ao que saía antes
+de o segundo existir.
+
+O que os dois compartilham é `normalize_lines`, que conserta dois artefatos da
+exportação: o número partido em dois tokens (`1` + `5.400,82` = 15.400,82, com
+trava de proximidade em x para não juntar colunas distintas) e o `R$`
+intercalado entre os números. No Orçamento Analítico real isso não altera uma
+linha sequer, então roda nos dois sem risco.
+
+### Casamento por descrição
+
+Sem coluna Código, o item é ligado à composição pela semelhança das descrições
+(`matching.py`), antes do planejamento — assim `planner`, `synth` e `resolver`
+seguem trabalhando só por código.
+
+| Faixa | O que acontece |
+|---|---|
+| ≥ `description_match_high` (0,85) | aceita direto |
+| entre o mínimo e o alto | aceita e marca **CONFERIR** na seção 9 do `LOG AUTO` |
+| < `description_match_min` (0,60) | não aplica; cai em "composição não encontrada" |
+
+`rules.description_match` controla quando isso vale: `"sem_codigo"` (padrão) só
+para item que chega sem código nenhum — é o que torna a Planilha Orçamentária
+utilizável **sem** tocar no formato analítico, onde todo item tem código e o
+resultado já está validado. `"sempre"` também tenta quando o código existe mas
+não está no índice; `"nunca"` desliga.

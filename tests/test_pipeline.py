@@ -220,3 +220,68 @@ def test_aviso_de_titulo_nao_reconhecido_chega_ao_log(workbook_path, topics, con
                       .iter_rows(values_only=True))
     assert "8) AVISOS DE LEITURA DAS COMPOSICOES" in texto
     assert "RELATORIO ANALITICO" in texto
+
+
+# ---------------------------------------------------------------------------
+# Casamento por descrição — orçamento sem coluna de código (Planilha
+# Orçamentária exportada do Excel).
+# ---------------------------------------------------------------------------
+
+def _sem_codigo(descricao, ordem="5.1", quantidade=120.0):
+    from orcauto.pdf_budget import BudgetItem
+    return BudgetItem(ordem, "", descricao, "M2", quantidade, 1.0, quantidade,
+                      1, 5, "REVESTIMENTO")
+
+
+def test_item_sem_codigo_recebe_codigo_pela_descricao(workbook_path, config, tmp_path):
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [
+        _sem_codigo("CHAPISCO DE CIMENTO E AREIA", "5.1"),          # = S001, idêntico
+    ])
+    resultado = run(workbook_path, None, tmp_path / "desc.xlsx", config, topics=[topico])
+    assert topico.items[0].code == "S001"                # preenchido pelo casamento
+    match = resultado.matches[0]
+    assert match.accepted and not match.needs_review
+    assert match.score == pytest.approx(1.0)
+
+
+def test_semelhanca_intermediaria_e_aceita_mas_sinalizada(workbook_path, config, tmp_path):
+    """Entre os dois limiares, aplica e manda conferir — não decide sozinho."""
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [_sem_codigo("CHAPISCO DE CIMENTO")])
+    resultado = run(workbook_path, None, tmp_path / "meio.xlsx", config, topics=[topico])
+    match = resultado.matches[0]
+    assert match.accepted and match.needs_review
+    assert config.rules.description_match_min <= match.score < config.rules.description_match_high
+
+
+def test_descricao_sem_par_nao_e_aplicada(workbook_path, config, tmp_path):
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [_sem_codigo("INSTALACAO DE PARA-RAIOS TIPO FRANKLIN")])
+    resultado = run(workbook_path, None, tmp_path / "nada.xlsx", config, topics=[topico])
+    match = resultado.matches[0]
+    assert not match.accepted
+    assert topico.items[0].code == ""                    # nada foi inventado
+
+
+def test_log_auto_traz_a_secao_de_casamento_por_descricao(workbook_path, config, tmp_path):
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [
+        _sem_codigo("CHAPISCO DE CIMENTO E AREIA", "5.1"),   # 1,00 -> aceito direto
+        _sem_codigo("CHAPISCO DE CIMENTO", "5.2"),           # intermediário -> CONFERIR
+    ])
+    destino = tmp_path / "log.xlsx"
+    run(workbook_path, None, destino, config, topics=[topico])
+    texto = "\n".join("|".join(str(c) for c in row if c not in (None, ""))
+                      for row in openpyxl.load_workbook(destino)["LOG AUTO"]
+                      .iter_rows(values_only=True))
+    assert "9) CASAMENTO POR DESCRICAO" in texto
+    assert "CONFERIR" in texto                            # o caso de conferência humana
+    assert "aceito automaticamente" in texto
+    assert "S001" in texto
+
+
+def test_item_com_codigo_nao_e_tocado_pelo_casamento(workbook_path, topics, config, tmp_path):
+    """O formato analítico não passa por aqui: todo item dele tem código."""
+    resultado = run(workbook_path, None, tmp_path / "codigo.xlsx", config, topics=topics)
+    assert resultado.matches == []

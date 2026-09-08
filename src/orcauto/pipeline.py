@@ -11,6 +11,7 @@ from .audit import Auditoria
 from .compositions import CompositionIndex, build_index
 from .config import Config
 from .layout import SheetLayout, TemplateLayout, detect, detect_template, is_empty
+from .matching import DescriptionMatch, resolve_missing_codes
 from .ooxml import (Workbook, cell_content, ensure_row, retarget_sumproduct, set_cell,
                     show_row)
 from .pdf_budget import Topic, items_by_code, read_budget
@@ -29,6 +30,7 @@ class Result:
     topics: list[Topic] = field(default_factory=list)
     index: CompositionIndex | None = None
     audit: Audit | None = None
+    matches: list[DescriptionMatch] = field(default_factory=list)
     insercoes: Auditoria | None = None
 
     @property
@@ -125,6 +127,13 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
     index = build_index(values, config.compositions)
     resolver = Resolver(index, config.compositions)
 
+    # Orçamento sem coluna Código (Planilha Orçamentária exportada do Excel):
+    # o código é atribuído por semelhança de descrição ANTES do planejamento,
+    # para que planner/synth/resolver sigam trabalhando só por código.
+    matches = resolve_missing_codes(topics, index, config.rules)
+    if matches:
+        budget_codes = set(items_by_code(topics))
+
     def usable(name: str) -> bool:
         try:
             detect(formulas[name], values[name], config.targets)
@@ -159,7 +168,9 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
                                 index, resolver, config, auditoria)
 
     audit = Audit(plans, config.targets.suffix, budget_codes, synth,
-                  warnings=index.warnings)
+                  warnings=index.warnings, matches=matches,
+                  description_match_high=config.rules.description_match_high,
+                  description_match_min=config.rules.description_match_min)
     if config.rules.write_log_sheet:
         bold = package.append_style(bold=True)
         wrap = package.append_style(wrap=True)
@@ -170,7 +181,7 @@ def run(xlsx_path: str | Path, pdf_path: str | Path | None, output: str | Path,
     formulas.close()
     values.close()
     return Result(output=output, plans=plans, synth=synth, topics=topics,
-                  index=index, audit=audit, insercoes=auditoria)
+                  index=index, audit=audit, insercoes=auditoria, matches=matches)
 
 
 def _synthesize_missing(package: Workbook, formulas, values, topics: list[Topic],

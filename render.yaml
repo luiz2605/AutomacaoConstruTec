@@ -18,3 +18,15 @@ services:
         value: orcamentos
       - key: ORCAUTO_SENHA
         sync: false       # digitada no painel do Render; nunca no repositório
+      # Relato de problema pela própria tela. Sem estas, a rota /relatar
+      # responde 503 e o link nem aparece na interface — nada quebra.
+      - key: ORCAUTO_SMTP_HOST
+        sync: false
+      - key: ORCAUTO_SMTP_PORTA
+        value: "465"
+      - key: ORCAUTO_SMTP_USUARIO
+        sync: false
+      - key: ORCAUTO_SMTP_SENHA
+        sync: false       # senha de app do provedor, não a senha da conta
+      - key: ORCAUTO_EMAIL_SUPORTE
+        sync: false

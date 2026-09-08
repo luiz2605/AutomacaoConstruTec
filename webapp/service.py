@@ -84,6 +84,15 @@ def processar_orcamento(pdf_path: str | os.PathLike,
     criadas = [p for p in resultado.synth if p.created]
     avisos = [f"{p.topic_name}: {p.reason}" for p in resultado.synth if not p.created]
     if not criadas and not resultado.plans:
+        # Dois problemas diferentes caíam na mesma frase, e a que existia
+        # mandava conferir a planilha-base mesmo quando o defeito era de
+        # leitura do PDF — foi o que aconteceu com a Planilha Orçamentária.
+        itens = sum(len(t.items) for t in resultado.topics)
+        if itens == 0:
+            raise ProcessingError(
+                "O formato deste PDF não foi reconhecido. Confira se é um Orçamento "
+                "Analítico ou uma Planilha Orçamentária exportada do Excel."
+            )
         raise ProcessingError(
             "O PDF foi lido, mas nenhum item dele encontrou composição na planilha-base. "
             "Verifique se o orçamento e a planilha são do mesmo cliente/tabela."

@@ -2,6 +2,7 @@
 """Aplicação web do orcauto: envia o PDF do orçamento, baixa o levantamento."""
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import shutil
@@ -9,7 +10,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
@@ -17,7 +18,11 @@ from starlette.background import BackgroundTask
 from starlette.requests import Request
 
 from .jobs import ERRO, PRONTO, Fila
+from .relatos import (FalhaNoEnvio, RelatoNaoConfigurado, configurado,
+                      enviar_relato)
 from .service import caminho_base
+
+logger = logging.getLogger(__name__)
 
 PASTA = Path(__file__).resolve().parent
 TAMANHO_MAXIMO = int(os.environ.get("ORCAUTO_MAX_MB", "40")) * 1024 * 1024
@@ -77,6 +82,7 @@ def pagina(request: Request, usuario: str = Depends(exigir_login)):
     return templates.TemplateResponse(request, "index.html", {
         "indisponivel": indisponivel,
         "tamanho_maximo_mb": TAMANHO_MAXIMO // (1024 * 1024),
+        "relato_disponivel": configurado(),
     })
 
 
@@ -137,6 +143,47 @@ def baixar(job_id: str, usuario: str = Depends(exigir_login)):
         # entregue o arquivo e apague tudo: o servidor não guarda nada
         background=BackgroundTask(fila.descartar, job.id),
     )
+
+
+@app.post("/relatar")
+async def relatar(descricao: str = Form(""), job_id: str | None = Form(None),
+                  usuario: str = Depends(exigir_login)):
+    """Relato de problema escrito pelo funcionário, na própria tela.
+
+    O PDF enviado já foi apagado quando o processamento terminou (ver
+    `jobs.py::executar`), então o relato leva só o texto e o `job_id` como
+    referência — não há arquivo no servidor para anexar.
+    """
+    # `Form("")` em vez de `Form(...)`: com o campo obrigatório, uma descrição
+    # vazia devolve o 422 do validador, com o corpo de erro do Pydantic. Quem
+    # está na tela precisa da frase abaixo, e a regra de negócio ("descreva
+    # antes de enviar") é a mesma para campo ausente e campo em branco.
+    if not descricao.strip():
+        raise HTTPException(400, "Descreva o problema antes de enviar.")
+
+    contexto = {"usuario": usuario}
+    if job_id:
+        contexto["job_id"] = job_id
+        job = fila.obter(job_id)
+        if job is not None:
+            # o que o suporte precisa para reproduzir, e que o funcionário não
+            # tem como digitar: nome do PDF, estado e o erro exato, se houve
+            contexto["arquivo"] = job.nome_original
+            contexto["estado"] = job.estado
+            if job.erro:
+                contexto["erro"] = job.erro
+
+    try:
+        enviar_relato(descricao.strip(), contexto)
+    except RelatoNaoConfigurado:
+        logger.exception("Relato de problema não configurado")
+        raise HTTPException(503, "O envio de relatos ainda não foi configurado neste "
+                                 "servidor. Avise a equipe responsável.")
+    except FalhaNoEnvio:
+        logger.exception("Falha ao enviar relato")
+        raise HTTPException(502, "Não foi possível enviar o relato agora. "
+                                 "Tente de novo em instantes.")
+    return JSONResponse({"ok": True})
 
 
 @app.get("/saude")
