@@ -235,6 +235,14 @@ escreveu.
 
 Na maioria dos provedores use uma **senha de aplicativo**, não a senha da conta.
 
+No Render, cadastre as cinco em **Environment**, no painel — elas
+**deliberadamente não estão no `render.yaml`**. Declará-las lá com `sync: false`
+acrescenta variáveis sem valor a um blueprint já existente, e foi o que fez o
+deploy de blueprint falhar em 08/09/2026 (o Auto-Deploy do mesmo commit subiu
+sem problema, o que localizou o defeito no arquivo, não no código). Como as
+cinco são opcionais, mantê-las fora do blueprint não custa nada: a aplicação
+sobe igual e o recurso liga assim que os valores existirem.
+
 ## Dois formatos de PDF
 
 O programa reconhece sozinho qual dos dois formatos chegou, olhando o cabeçalho

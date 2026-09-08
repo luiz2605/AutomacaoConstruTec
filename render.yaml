@@ -18,15 +18,14 @@ services:
         value: orcamentos
       - key: ORCAUTO_SENHA
         sync: false       # digitada no painel do Render; nunca no repositório
-      # Relato de problema pela própria tela. Sem estas, a rota /relatar
-      # responde 503 e o link nem aparece na interface — nada quebra.
-      - key: ORCAUTO_SMTP_HOST
-        sync: false
-      - key: ORCAUTO_SMTP_PORTA
-        value: "465"
-      - key: ORCAUTO_SMTP_USUARIO
-        sync: false
-      - key: ORCAUTO_SMTP_SENHA
-        sync: false       # senha de app do provedor, não a senha da conta
-      - key: ORCAUTO_EMAIL_SUPORTE
-        sync: false
+
+    # NÃO declarar aqui as variáveis do relato por e-mail (ORCAUTO_SMTP_HOST,
+    # ORCAUTO_SMTP_PORTA, ORCAUTO_SMTP_USUARIO, ORCAUTO_SMTP_SENHA,
+    # ORCAUTO_EMAIL_SUPORTE). Elas são cadastradas direto no painel do Render,
+    # em Environment. Declará-las com `sync: false` acrescentou quatro variáveis
+    # sem valor a um blueprint que já existia, e o deploy de blueprint falhou
+    # (08/09/2026, 4:20:59) — enquanto o Auto-Deploy do MESMO commit subiu sem
+    # problema, o que mostra que o defeito era deste arquivo, não do código.
+    # Nada se perde: as cinco são opcionais. Sem elas a aplicação sobe igual,
+    # o link "Relatar um problema" não aparece e /relatar responde 503.
+    # A tabela com o que cada uma faz está no README.
