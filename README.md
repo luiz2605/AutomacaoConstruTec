@@ -252,11 +252,15 @@ seleção de formato na tela.
 | | **Orçamento Analítico** | **Planilha Orçamentária** |
 |---|---|---|
 | Colunas | `Ordem \| Código \| Descrição \| Unidade \| Quantidade \| Preço \| Total` | `Item \| Descrição \| Un. \| Quant. \| Preço \| Subtotal \| Perc.` |
-| Coluna Código | sim | **não** |
+| Coluna Código | sim | **opcional** — a exportação de agosto não tem, a de setembro tem |
 | Valor do tópico | na própria linha do tópico | numa linha `SUBTOTAL`, depois dos itens |
 | Numeração | `3.2` | `2.01` e `4,01` — ponto e vírgula no mesmo arquivo |
-| Casamento | por código | por descrição |
+| Casamento | por código | por código quando a coluna existe; por descrição quando não |
 | Função | `parse_budget` | `parse_budget_planilha_excel` |
+
+Quem decide o perfil é a **forma da linha de tópico**, não a presença da
+coluna Código — as duas exportações da mesma planilha diferem nisso, e usar a
+coluna como sinal mandava a de setembro para o leitor errado.
 
 São dois leitores separados de propósito. O analítico está em uso e validado; a
 suíte tem um teste dedicado provando que ele sai **idêntico** ao que saía antes

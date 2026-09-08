@@ -92,15 +92,21 @@ def extract_lines(pdf_path: str | Path, config: PdfConfig | None = None) -> list
 
 
 _DIGITO_SOLTO = re.compile(r"^\d$")
-# O segundo pedaço vem de três jeitos, todos vistos no arquivo real:
+# O segundo pedaço aparece de todo jeito, nas duas exportações reais:
 #   '5' + '.986,61'   -> 5.986,61     (começa no ponto de milhar)
-#   '1' + '5.400,82'  -> 15.400,82    (começa num dígito)
+#   '1' + '5.400,82'  -> 15.400,82    (começa num dígito, com milhar)
 #   '1' + '0.180,59'  -> 10.180,59    (idem, com zero)
-# Em todos, concatenar os dois tokens dá o número certo.
-_RESTO_DO_MILHAR = re.compile(r"^\d?\.\d{3}(?:\.\d{3})*,\d+$")
-# Folga máxima em x entre os dois pedaços. No PDF real ela é 3,3 pt em todos os
-# 54 pares — a largura de um dígito. A trava impede juntar uma quantidade "1"
-# com o preço da coluna seguinte, que estaria dezenas de pontos à direita.
+#   '8' + '8,26'      -> 88,26        (sem milhar nenhum)
+#   '7' + '68,58'     -> 768,58       (dois dígitos antes da vírgula)
+#   '6' + ',01'       -> 6,01         (começa na própria vírgula)
+# O que não varia: o resto é sempre "dígitos e pontos, vírgula, decimais", e
+# concatenar os dois tokens devolve o número certo. Na exportação de agosto a
+# quebra caía no Subtotal; na de setembro, no Preço.
+_RESTO_DO_MILHAR = re.compile(r"^[\d.]*,\d+$")
+# Folga máxima em x entre os dois pedaços: 3 a 4 pt nos dois arquivos reais, a
+# largura de um dígito. É esta trava que segura a regex acima, que sozinha é
+# larga: sem ela, uma quantidade "1" se juntaria ao preço da coluna seguinte —
+# que fica a dezenas de pontos de distância, não a quatro.
 _FOLGA_FRAGMENTO = 6.0
 _MOEDA = "R$"
 
@@ -140,18 +146,41 @@ def normalize_lines(lines: list[Line]) -> list[Line]:
 def detect_profile(lines: list[Line], config: PdfConfig | None = None) -> str:
     """Qual perfil de leitura serve para este PDF: 'analitico' ou 'planilha'.
 
-    O sinal é o cabeçalho da tabela: o Orçamento Analítico tem uma coluna
-    `Código`, a Planilha Orçamentária não tem. É o funcionário que arrasta o
-    PDF na tela — ele não deve precisar escolher formato nenhum.
+    O sinal é a **forma do cabeçalho de tópico**, que é o que de fato separa os
+    dois leitores:
+
+    * analítico  — `1 SERVIÇOS PRELIMINARES 271.609,49`: número puro e o valor
+      do tópico na mesma linha;
+    * planilha   — `1.00 ADMINISTRAÇÃO GERAL DE OBRA`: número com `.00`/`,00`
+      e nenhum valor (ele vem numa linha `SUBTOTAL`, depois dos itens).
+
+    Antes o sinal era a presença de uma coluna `Código`, e isso estava errado:
+    a Planilha Orçamentária **também pode ter** essa coluna — a exportação de
+    08/09/2026 tem — e o PDF ia parar no leitor errado, que devolvia zero itens.
+    Ter código ou não é ortogonal ao formato; quem decide é a linha de tópico.
     """
     config = config or PdfConfig()
-    procurados = tuple(normalize(p) for p in config.code_header_words)
+    topic_re = re.compile(config.topic_number_re)
+    number_re = re.compile(config.number_re)
+    planilha_re = re.compile(config.planilha_topic_re)
+
+    analitico = planilha = 0
     for line in lines:
-        if line.page > 2:                      # o cabeçalho está no começo
-            break
-        if any(normalize(palavra) in procurados for palavra in line.texts):
-            return "analitico"
-    return "planilha"
+        if not line.words:
+            continue
+        first, x0 = line.words[0].text, line.words[0].x0
+        texts = line.texts
+        if len(texts) < 2:
+            continue
+        nome_em_caixa_alta = not any(c.islower() for c in " ".join(texts[1:]))
+        if (topic_re.match(first) and x0 < config.topic_max_x
+                and number_re.match(texts[-1])
+                and not any(c.islower() for c in " ".join(texts[1:-1]))):
+            analitico += 1
+        elif (planilha_re.match(first) and x0 <= config.planilha_order_max_x
+                and nome_em_caixa_alta):
+            planilha += 1
+    return "analitico" if analitico > planilha else "planilha"
 
 
 def parse_budget(lines: list[Line], config: PdfConfig | None = None) -> list[Topic]:
@@ -217,6 +246,25 @@ def parse_budget(lines: list[Line], config: PdfConfig | None = None) -> list[Top
     return topics
 
 
+_PARECE_CODIGO = re.compile(r"^[A-Z][A-Z0-9]*\d[A-Z0-9._/-]*$")
+
+
+def _tem_coluna_codigo(lines: list[Line], config: PdfConfig) -> bool:
+    """Se o cabeçalho da tabela declara uma coluna de código.
+
+    A Planilha Orçamentária aparece nas duas versões: a exportação de agosto
+    não tem a coluna, a de setembro tem. Quando ela existe os códigos são os da
+    própria tabela SEINFRA, e usá-los é melhor do que casar por descrição.
+    """
+    procurados = tuple(normalize(p) for p in config.code_header_words)
+    for line in lines:
+        if line.page > 2:
+            break
+        if any(normalize(palavra) in procurados for palavra in line.texts):
+            return True
+    return False
+
+
 def _numeros_finais(texts: list[str], number_re, quantos: int) -> tuple[list[str], int]:
     """Números do fim da linha e o índice do token imediatamente anterior."""
     numeros: list[str] = []
@@ -254,6 +302,7 @@ def parse_budget_planilha_excel(lines: list[Line],
     lines = normalize_lines(lines)
 
     fragmentos = _adotar_orfas(lines, config)
+    com_codigo = _tem_coluna_codigo(lines, config)
 
     topics: list[Topic] = []
     topic: Topic | None = None
@@ -281,7 +330,17 @@ def parse_budget_planilha_excel(lines: list[Line],
         numeros, cursor = _numeros_finais(texts, number_re, config.trailing_numbers)
         completo = len(numeros) == config.trailing_numbers
         unidade = texts[cursor] if completo and cursor >= 1 else None
-        proprio = " ".join(texts[1:cursor]).strip() if completo else " ".join(texts[1:]).strip()
+        fim = cursor if completo else len(texts)
+
+        # Layout: Item | [Codigo] | Descrição | Un. | Quant. | Preço | Subtotal.
+        # A coluna de código só é consumida quando o cabeçalho a declara E o
+        # token tem cara de código — assim uma linha com a célula em branco não
+        # perde a primeira palavra da descrição.
+        inicio = 1
+        codigo = ""
+        if com_codigo and fim > 1 and _PARECE_CODIGO.match(texts[1]):
+            codigo, inicio = texts[1], 2
+        proprio = " ".join(texts[inicio:fim]).strip()
 
         # a descrição pode vir de três lugares: linha de cima, a própria linha e
         # linha de baixo. Ordenar por altura reconstrói a frase na ordem certa.
@@ -292,7 +351,7 @@ def parse_budget_planilha_excel(lines: list[Line],
 
         topic.items.append(BudgetItem(
             order=first,
-            code="",                            # este formato não tem código
+            code=codigo,                        # vazio quando não há a coluna
             description=" ".join(descricao.split()),
             unit=unidade if completo else None,
             quantity=parse_number(numeros[0]) if completo else None,

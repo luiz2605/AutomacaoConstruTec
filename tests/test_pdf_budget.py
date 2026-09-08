@@ -92,21 +92,63 @@ PLANILHA = [
 ]
 
 
-def test_detecta_o_perfil_pela_coluna_codigo():
+def test_detecta_o_perfil_pela_forma_do_cabecalho_de_topico():
     """O funcionário arrasta o PDF; quem escolhe o formato é o programa."""
-    assert detect_profile(LINHAS) == "analitico"        # tem cabeçalho "Código"
-    assert detect_profile(PLANILHA) == "planilha"       # não tem
+    assert detect_profile(LINHAS) == "analitico"        # "3 INFRAESTRUTURA 439.984,92"
+    assert detect_profile(PLANILHA) == "planilha"       # "2.00 SERVIÇOS PRELIMINARES"
+
+
+def test_coluna_codigo_nao_define_o_perfil():
+    """A Planilha Orçamentária também pode ter coluna Código.
+
+    A exportação de setembro tem, a de agosto não — e as duas são o mesmo
+    formato. Usar a coluna como sinal mandava a de setembro para o leitor
+    analítico, que devolvia zero itens.
+    """
+    com_codigo = [
+        line(1, 162, ("Item", 40.0), ("Codigo", 78.0), ("Descrição", 219.0),
+             ("Un.", 374.0), ("Quant.", 405.0), ("Preço", 449.0), ("Subtotal", 497.0)),
+        line(1, 235, ("2.00", 42.0), ("SERVIÇOS", 107.0), ("PRELIMINARES", 138.0)),
+        line(1, 253, ("2.01", 42.0), ("C1043", 80.0), ("DEMOLIÇÃO", 109.0),
+             ("M3", 375.0), ("67,83", 408.0), ("R$", 440.0), ("8", 462.0),
+             ("8,26", 465.0), ("R$", 482.0), ("5.986,61", 514.0)),
+    ]
+    assert detect_profile(com_codigo) == "planilha"
+    item = parse_budget_planilha_excel(com_codigo)[0].items[0]
+    assert item.code == "C1043"                    # o código da planilha é usado
+    assert item.description == "DEMOLIÇÃO"         # e não some para dentro dele
+    assert (item.quantity, item.unit_price, item.total) == (67.83, 88.26, 5986.61)
+
+
+def test_celula_de_codigo_em_branco_nao_come_a_descricao():
+    """Sem código na linha, a primeira palavra da descrição tem de sobreviver."""
+    sem = [
+        line(1, 162, ("Item", 40.0), ("Codigo", 78.0), ("Descrição", 219.0)),
+        line(1, 235, ("2.00", 42.0), ("SERVIÇOS", 107.0), ("PRELIMINARES", 138.0)),
+        line(1, 253, ("2.01", 42.0), ("DEMOLIÇÃO", 109.0), ("DE", 144.0), ("PISO", 154.0),
+             ("M3", 375.0), ("67,83", 408.0), ("88,26", 456.0), ("5.986,61", 514.0)),
+    ]
+    item = parse_budget_planilha_excel(sem)[0].items[0]
+    assert item.code == ""
+    assert item.description == "DEMOLIÇÃO DE PISO"
 
 
 def test_numero_partido_em_dois_tokens_e_remontado():
-    """Três formas do mesmo defeito de exportação, todas vistas no PDF real."""
+    """Todas as formas vistas nas duas exportações reais da mesma planilha.
+
+    Em agosto a quebra caía no Subtotal, em setembro no Preço — e o segundo
+    pedaço nem sempre tem ponto de milhar.
+    """
     partido = [
         line(1, 10, ("R$", 477.0), ("5", 511.7), (".986,61", 515.0)),      # 5.986,61
         line(1, 20, ("R$", 477.0), ("1", 508.4), ("5.400,82", 511.7)),     # 15.400,82
         line(1, 30, ("R$", 477.0), ("1", 508.4), ("0.180,59", 511.7)),     # 10.180,59
+        line(1, 40, ("R$", 440.0), ("8", 462.0), ("8,26", 465.0)),         # 88,26
+        line(1, 50, ("R$", 440.0), ("7", 458.0), ("68,58", 462.0)),        # 768,58
+        line(1, 60, ("R$", 440.0), ("6", 465.0), (",01", 468.0)),          # 6,01
     ]
     assert [l.texts for l in normalize_lines(partido)] == [
-        ["5.986,61"], ["15.400,82"], ["10.180,59"]]
+        ["5.986,61"], ["15.400,82"], ["10.180,59"], ["88,26"], ["768,58"], ["6,01"]]
 
 
 def test_nao_junta_numeros_de_colunas_diferentes():
@@ -173,6 +215,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.mark.parametrize("arquivo, perfil, topicos, itens", [
     ("pdf_planilha_exportada.pdf", "planilha", 13, 54),
+    ("pdf_planilha_exportada_com_codigo.pdf", "planilha", 13, 54),
     ("pdf_orcamento_analitico.pdf", "analitico", 20, 189),
 ])
 def test_pdfs_reais_de_ponta_a_ponta(arquivo, perfil, topicos, itens):
@@ -211,3 +254,46 @@ def test_orcamento_analitico_nao_regride():
     assert (item.order, item.unit, item.quantity) == ("2.3", "M3", 65.0)
     assert item.description == "DEMOLIÇÃO DE ALVENARIA DE PEDRA COM REMOÇÃO LATERAL"
     assert all(i.code for t in topics for i in t.items)     # todo item tem código
+
+
+def test_exportacao_de_setembro_traz_os_codigos_da_planilha():
+    """A mesma obra, exportada de novo, agora com coluna Código preenchida."""
+    pytest.importorskip("pdfplumber")
+    caminho = FIXTURES / "pdf_planilha_exportada_com_codigo.pdf"
+    if not caminho.exists():
+        pytest.skip("fixture ausente")
+    from orcauto.pdf_budget import read_budget
+
+    itens = [i for t in read_budget(caminho) for i in t.items]
+    assert all(i.code for i in itens)              # todos os 54 com código
+    primeiro = itens[1]
+    assert (primeiro.order, primeiro.code) == ("2.01", "C1043")
+    assert primeiro.description == "DEMOLIÇÃO DE ALVENARIA DE TIJOLOS S/ REAPROVEITAMENTO"
+
+
+@pytest.mark.parametrize("arquivo", [
+    "pdf_planilha_exportada.pdf",
+    "pdf_planilha_exportada_com_codigo.pdf",
+    "pdf_orcamento_analitico.pdf",
+])
+def test_quantidade_vezes_preco_bate_com_o_total(arquivo):
+    """Prova aritmética independente de que os números foram remontados certo.
+
+    Um merge errado desloca a vírgula e a conta deixa de fechar. O item 8,01 é
+    a única exceção, idêntica nas duas exportações: a divergência está na
+    planilha de origem, não na leitura.
+    """
+    pytest.importorskip("pdfplumber")
+    caminho = FIXTURES / arquivo
+    if not caminho.exists():
+        pytest.skip("fixture ausente")
+    from orcauto.pdf_budget import read_budget
+
+    errados = []
+    for item in (i for t in read_budget(caminho) for i in t.items):
+        if None in (item.quantity, item.unit_price, item.total):
+            continue
+        folga = max(1.0, abs(item.total) * 0.005)          # arredondamento
+        if abs(item.quantity * item.unit_price - item.total) > folga:
+            errados.append(item.order)
+    assert errados in ([], ["8,01"]), errados

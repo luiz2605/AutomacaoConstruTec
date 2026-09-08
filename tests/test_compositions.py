@@ -112,3 +112,21 @@ def test_titulo_reconhecido_nao_gera_aviso(composition_rows):
     avisos: list[str] = []
     parse_sheet(composition_rows, "COMPOSICOES", warnings=avisos)
     assert avisos == []
+
+
+def test_codigo_do_orcamento_nao_casa_com_vizinho_de_zero_diferente():
+    """Busca por código é exata — nunca aproximada.
+
+    Tentei uma busca frouxa ignorando zeros à esquerda, para o `CPC0002` do
+    orçamento achar o `CPC002` da planilha. É errada: no orçamento real do
+    hospital o `CPC0009` ("ADMINISTRAÇÃO LOCAL") passou a cair em `CPC009`
+    ("BANCADA DE GRANITO"), outro serviço. Quando o código do orçamento não
+    existe na planilha, o certo é não aplicar.
+    """
+    linhas = [["CPC009 - BANCADA DE GRANITO VERDE UBATUBA - M2"],
+              ["MATERIAIS", None, "Unidade", "Coeficiente"],
+              ["X001", "GRANITO", "M2", 1.05]]
+    index = CompositionIndex(parse_sheet(linhas, "COMPOSICOES"))
+    assert index.get("CPC009").code == "CPC009"
+    assert index.get("CPC0009") is None
+    assert index.get("CPC9") is None

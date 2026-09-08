@@ -50,6 +50,12 @@ class CompositionIndex:
         self.compositions = list(compositions)
         self.preferred_sheets = preferred_sheets or []
         self.warnings = list(warnings or [])
+        # O código é identificador: a busca é exata, sempre. Já tentei uma
+        # busca frouxa ignorando zeros à esquerda, para casar o `CPC0002` do
+        # orçamento com o `CPC002` da planilha, e ela é ERRADA: o `CPC0009` do
+        # orçamento do hospital ("ADMINISTRAÇÃO LOCAL") cai em `CPC009`
+        # ("BANCADA DE GRANITO"), que é outro serviço. Não colidir dentro do
+        # índice não garante que o código vindo do PDF caia no lugar certo.
         self._by_code: dict[str, list[Composition]] = {}
         for composition in self.compositions:
             self._by_code.setdefault(composition.code, []).append(composition)
