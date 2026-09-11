@@ -285,3 +285,35 @@ def test_item_com_codigo_nao_e_tocado_pelo_casamento(workbook_path, topics, conf
     """O formato analítico não passa por aqui: todo item dele tem código."""
     resultado = run(workbook_path, None, tmp_path / "codigo.xlsx", config, topics=topics)
     assert resultado.matches == []
+
+
+def test_descricao_que_so_muda_no_numero_nunca_passa_calada(workbook_path, config, tmp_path):
+    """`L= 8cm` x `L= 5cm` são produtos diferentes, por mais parecido que soe.
+
+    Caso real: FILETE DE GRANITO VERDE UBATUBA L= 8cm casou com o L= 5cm da
+    planilha com escore 0,97 — acima do limiar alto — e era aplicado sem aviso
+    nenhum. Em orçamento de obra o número é especificação, não ruído de texto.
+    """
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [_sem_codigo("CHAPISCO DE CIMENTO E AREIA 8cm")])
+    resultado = run(workbook_path, None, tmp_path / "medida.xlsx", config, topics=[topico])
+    match = resultado.matches[0]
+    assert match.accepted                       # entra
+    assert match.needs_review                   # mas com o olho humano em cima
+    assert match.score >= config.rules.description_match_high   # apesar do escore alto
+
+
+def test_descricao_identica_continua_aceita_sem_alarme(workbook_path, config, tmp_path):
+    """A regra dos números não pode encher o log de falso alarme."""
+    from orcauto.pdf_budget import Topic
+    topico = Topic(5, "REVESTIMENTO", [_sem_codigo("CHAPISCO DE CIMENTO E AREIA")])
+    match = run(workbook_path, None, tmp_path / "igual.xlsx", config, topics=[topico]).matches[0]
+    assert match.accepted and not match.needs_review
+
+
+def test_medidas_extrai_os_numeros_da_descricao():
+    from orcauto.matching import medidas
+    assert medidas("FILETE DE GRANITO L= 8cm") == {"8"}
+    assert medidas("ARMADURA EM TELA SOLDÁVEL Q-61") == {"61"}
+    assert medidas("CONCRETO FCK 25 MPa 1:3") == {"25", "1", "3"}
+    assert medidas("LIMPEZA GERAL") == frozenset()
