@@ -82,6 +82,11 @@ class CompositionConfig:
     # Numa "RELAÇÃO DE MATERIAIS", ("MATERIAIS",) deixa de fora mão de obra e
     # equipamento — no orçamento real isso é 34% das colunas.
     column_sections: tuple[str, ...] = ()
+    # Unidades que vão para o começo da aba gerada. As colunas em H (hora) são
+    # mão de obra e equipamento, que a equipe usa para outras contas: ficam à
+    # esquerda em vez de espalhadas entre dezenas de colunas de material. O
+    # resto é agrupado por unidade, na ordem de primeira aparição.
+    priority_units: tuple[str, ...] = ("H",)
     min_tables_to_autodetect: int = 5
 
 

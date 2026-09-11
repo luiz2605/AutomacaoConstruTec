@@ -120,6 +120,16 @@ def gerado(template_workbook_path, topics, tmp_path):
     return resultado, openpyxl.load_workbook(destino)
 
 
+def coluna_de(sheet, codigo, linha_dos_codigos=7):
+    """Letra da coluna de um insumo. A ordem das colunas é decidida pela
+    unidade, então o teste procura pelo código em vez de fixar a letra."""
+    for col in range(6, 60):
+        celula = sheet.cell(linha_dos_codigos, col)
+        if celula.value == codigo:
+            return celula.column_letter
+    raise AssertionError(f"coluna do insumo {codigo} não encontrada")
+
+
 def test_cria_a_aba_do_topico_e_mantem_o_molde(gerado):
     resultado, workbook = gerado
     assert [p.sheet for p in resultado.synth] == ["REVESTIMENTO"]
@@ -133,9 +143,9 @@ def test_cabecalho_de_tres_linhas_completo(gerado):
     """O molde real não tem fórmula de nome; a aba gerada nunca sai sem ela."""
     _, workbook = gerado
     sheet = workbook["REVESTIMENTO"]
-    assert sheet["F7"].value == "X001"                       # código
-    assert sheet["F8"].value == "CIMENTO"                    # nome (texto, D4)
-    assert sheet["F9"].value.startswith("=IFERROR(VLOOKUP(F7,")   # unidade
+    letra = coluna_de(sheet, "X001")
+    assert sheet[f"{letra}8"].value == "CIMENTO"                  # nome (texto, D4)
+    assert sheet[f"{letra}9"].value.startswith(f"=IFERROR(VLOOKUP({letra}7,")   # unidade
 
 
 def test_uma_linha_por_item_na_ordem_do_orcamento(gerado):
@@ -149,8 +159,9 @@ def test_uma_linha_por_item_na_ordem_do_orcamento(gerado):
 def test_coeficiente_aninhado_vira_formula_rastreavel(gerado):
     _, workbook = gerado
     sheet = workbook["REVESTIMENTO"]
-    assert sheet["F10"].value == "='COMPOSICOES'!D5"          # direto
-    assert sheet["F11"].value == "='COMPOSICOES'!D16*0.025"   # via S003
+    letra = coluna_de(sheet, "X001")
+    assert sheet[f"{letra}10"].value == "='COMPOSICOES'!D5"          # direto
+    assert sheet[f"{letra}11"].value == "='COMPOSICOES'!D16*0.025"   # via S003
 
 
 def test_coluna_acrescentada_alem_do_molde(gerado):
@@ -159,7 +170,7 @@ def test_coluna_acrescentada_alem_do_molde(gerado):
     plano = resultado.synth[0]
     assert [letra for letra, _ in plano.columns] == ["F", "G", "H"]
     assert plano.appended == ["H"]
-    assert workbook["REVESTIMENTO"]["H7"].value == "M001"
+    assert coluna_de(workbook["REVESTIMENTO"], "X002") == "H"
 
 
 def test_coluna_acrescentada_herda_o_formato_da_coluna_modelo(template_workbook_path,
@@ -201,8 +212,12 @@ def test_insumo_ensacado_recebe_roundup_no_total(template_workbook_path, topics,
     destino = tmp_path / "saco.xlsx"
     run(template_workbook_path, None, destino, config, topics=topics)
     sheet = openpyxl.load_workbook(destino)["REVESTIMENTO"]
-    assert sheet["F13"].value == "=ROUNDUP((SUMPRODUCT($E$10:$E$12,F10:F12)/50),0)"
-    assert sheet["G13"].value == "=SUMPRODUCT($E$10:$E$12,G10:G12)"   # os demais, não
+    ensacado = coluna_de(sheet, "X001")
+    comum = coluna_de(sheet, "X002")
+    assert sheet[f"{ensacado}13"].value == (
+        f"=ROUNDUP((SUMPRODUCT($E$10:$E$12,{ensacado}10:{ensacado}12)/50),0)")
+    assert sheet[f"{comum}13"].value == (
+        f"=SUMPRODUCT($E$10:$E$12,{comum}10:{comum}12)")             # os demais, não
 
 
 def test_item_sem_composicao_e_reportado_e_nao_vira_linha(gerado):
@@ -511,3 +526,45 @@ def test_item_nao_aplicado_em_aba_sintetizada_aparece_na_secao_2_do_log(
     secao = texto[inicio:fim]
     assert "S999" in secao                     # item 5.4, sem composição
     assert "composição não encontrada no arquivo" in secao
+
+
+# ---------------------------------------------------------------------------
+# Ordem das colunas: hora primeiro.
+# ---------------------------------------------------------------------------
+
+def test_colunas_em_hora_vem_antes_das_demais(gerado):
+    """A equipe usa as colunas em H para outras contas e precisa delas à mão."""
+    _, workbook = gerado
+    sheet = workbook["REVESTIMENTO"]
+    unidades = []
+    for col in range(6, 60):
+        codigo = sheet.cell(7, col).value
+        if not codigo:
+            break
+        unidades.append(sheet.cell(8, col).value)
+    # M001 = PEDREIRO, em H; X001 = CIMENTO em KG; X002 = AREIA em M3
+    assert coluna_de(sheet, "M001") == "F"                  # primeira coluna
+    assert sheet["F8"].value == "PEDREIRO"
+
+
+def test_ordem_por_unidade_agrupa_e_prioriza():
+    from orcauto.resolver import InputColumn, order_by_unit
+
+    def coluna(code, unit):
+        return InputColumn(code, code, unit, [])
+
+    entrada = [coluna("A", "KG"), coluna("B", "H"), coluna("C", "M2"),
+               coluna("D", "KG"), coluna("E", "H"), coluna("F", None)]
+    saida = [c.code for c in order_by_unit(entrada, priority=("H",))]
+    assert saida == ["B", "E",          # H primeiro, na ordem de aparição
+                     "A", "D",          # depois cada unidade agrupada,
+                     "C",               # na ordem em que a unidade apareceu
+                     "F"]               # sem unidade declarada, por último
+
+
+def test_ordem_por_unidade_e_estavel_sem_prioridade():
+    from orcauto.resolver import InputColumn, order_by_unit
+
+    entrada = [InputColumn(c, c, u, []) for c, u in
+               [("A", "KG"), ("B", "M2"), ("C", "KG")]]
+    assert [c.code for c in order_by_unit(entrada)] == ["A", "C", "B"]

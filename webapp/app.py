@@ -147,6 +147,7 @@ def baixar(job_id: str, usuario: str = Depends(exigir_login)):
 
 @app.post("/relatar")
 async def relatar(descricao: str = Form(""), job_id: str | None = Form(None),
+                  nome: str = Form(""), email: str = Form(""),
                   usuario: str = Depends(exigir_login)):
     """Relato de problema escrito pelo funcionário, na própria tela.
 
@@ -161,7 +162,15 @@ async def relatar(descricao: str = Form(""), job_id: str | None = Form(None),
     if not descricao.strip():
         raise HTTPException(400, "Descreva o problema antes de enviar.")
 
-    contexto = {"usuario": usuario}
+    # O login é um só para o escritório inteiro, então `usuario` não diz QUEM
+    # relatou. Nome e e-mail são de preenchimento livre: servem para o suporte
+    # responder a dúvida, que é metade do uso previsto.
+    contexto = {}
+    if nome.strip():
+        contexto["quem relatou"] = nome.strip()[:120]
+    if email.strip():
+        contexto["email"] = email.strip()[:200]
+    contexto["login"] = usuario
     if job_id:
         contexto["job_id"] = job_id
         job = fila.obter(job_id)

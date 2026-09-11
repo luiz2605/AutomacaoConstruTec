@@ -225,9 +225,14 @@ do arquivo, pede ao funcionário.
 | `ORCAUTO_SMTP_PORTA` | não | `465` (SSL) |
 | `ORCAUTO_SMTP_USUARIO` | sim | — (também é o remetente) |
 | `ORCAUTO_SMTP_SENHA` | sim | — |
-| `ORCAUTO_EMAIL_SUPORTE` | sim | — (destinatário) |
+| `ORCAUTO_EMAIL_SUPORTE` | não | `suportorcauto@gmail.com` |
 
-Faltando qualquer uma delas o recurso simplesmente não é oferecido: o link não
+O formulário traz **nome** e **e-mail** opcionais. O login é um só para o
+escritório inteiro, então ele não diz quem relatou; e quando a pessoa deixa
+e-mail, ele vira `Reply-To` da mensagem — o suporte responde com um clique, o
+que importa porque metade do uso previsto é dúvida, não defeito.
+
+Faltando qualquer uma das três obrigatórias o recurso simplesmente não é oferecido: o link não
 aparece na tela e a rota `/relatar` responde **503**. O resto da aplicação segue
 funcionando normalmente. Quando o envio é tentado e o servidor de e-mail recusa
 ou não responde, a resposta é **502** — falha temporária, não erro de quem
@@ -289,3 +294,14 @@ para item que chega sem código nenhum — é o que torna a Planilha Orçamentá
 utilizável **sem** tocar no formato analítico, onde todo item tem código e o
 resultado já está validado. `"sempre"` também tenta quando o código existe mas
 não está no índice; `"nunca"` desliga.
+
+### Ordem das colunas na aba gerada
+
+As colunas em **H** (hora) — mão de obra e equipamento — vão para o começo da
+aba: a equipe usa essas horas em outras contas e precisa delas à mão, não
+espalhadas entre dezenas de colunas de material. O resto fica agrupado por
+unidade (M3 com M3, KG com KG), na ordem em que cada unidade aparece no
+orçamento. Dentro de cada grupo vale a ordem de primeira aparição, que é o que
+faz duas execuções sobre o mesmo PDF gerarem exatamente a mesma aba.
+
+Configurável em `compositions.priority_units` (padrão `["H"]`).

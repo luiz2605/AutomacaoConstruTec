@@ -77,7 +77,8 @@ def plan_synthesis(layout: TemplateLayout, topic: Topic, sheet_name: str,
 
     inputs = topic_inputs([item for item, _ in usable], index, resolver,
                           config.compositions.column_sections,
-                          config.compositions.expand_subservices)
+                          config.compositions.expand_subservices,
+                          config.compositions.priority_units)
     for position, column_input in enumerate(inputs):
         if position < len(layout.slots):
             letter = layout.slots[position]

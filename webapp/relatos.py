@@ -21,6 +21,9 @@ USUARIO_ENV = "ORCAUTO_SMTP_USUARIO"
 SENHA_ENV = "ORCAUTO_SMTP_SENHA"
 SUPORTE_ENV = "ORCAUTO_EMAIL_SUPORTE"
 PORTA_PADRAO = "465"
+# Destino de fábrica: a caixa de suporte do orcauto. Continua podendo ser
+# trocada pela variável de ambiente, mas sem ela o recurso já funciona.
+SUPORTE_PADRAO = "suportorcauto@gmail.com"
 
 # O corpo é montado a partir de texto que o funcionário digitou. Um relato
 # gigante não pode virar um e-mail impossível de ler nem um vetor de abuso.
@@ -37,20 +40,24 @@ class FalhaNoEnvio(RuntimeError):
 
 def configurado() -> bool:
     """Se dá para enviar. A tela usa isto para não oferecer o que não funciona."""
-    return all(os.environ.get(nome) for nome in
-               (HOST_ENV, USUARIO_ENV, SENHA_ENV, SUPORTE_ENV))
+    return all(os.environ.get(nome) for nome in (HOST_ENV, USUARIO_ENV, SENHA_ENV))
 
 
 def montar_mensagem(descricao: str, contexto: dict | None = None) -> EmailMessage:
     """Monta o e-mail sem tocar na rede — é o que o teste consegue inspecionar."""
     remetente = os.environ.get(USUARIO_ENV)
-    destino = os.environ.get(SUPORTE_ENV)
+    destino = os.environ.get(SUPORTE_ENV) or SUPORTE_PADRAO
     if not remetente or not destino:
         raise RelatoNaoConfigurado(
-            f"defina {USUARIO_ENV} e {SUPORTE_ENV} para habilitar o relato de problemas")
+            f"defina {USUARIO_ENV} para habilitar o relato de problemas")
 
     msg = EmailMessage()
     msg["Subject"] = ASSUNTO
+    resposta = (contexto or {}).get("email")
+    if resposta:
+        # assim o suporte responde à pessoa com um clique, sem procurar o
+        # endereço no meio do texto
+        msg["Reply-To"] = resposta
     msg["From"] = remetente
     msg["To"] = destino
     corpo = descricao[:LIMITE_DESCRICAO]
@@ -69,7 +76,7 @@ def enviar_relato(descricao: str, contexto: dict | None = None,
     e no teste vira um duplo que registra a chamada sem abrir conexão.
     """
     if not configurado():
-        faltando = [nome for nome in (HOST_ENV, USUARIO_ENV, SENHA_ENV, SUPORTE_ENV)
+        faltando = [nome for nome in (HOST_ENV, USUARIO_ENV, SENHA_ENV)
                     if not os.environ.get(nome)]
         raise RelatoNaoConfigurado(
             "envio de relato não configurado no servidor; falta: " + ", ".join(faltando))

@@ -348,7 +348,7 @@ def test_relatar_envia_o_email_para_o_suporte(cliente, smtp):
     assert email["de"] == "orcauto@exemplo.com"
     assert (email["host"], email["porta"]) == ("smtp.exemplo.com", 465)
     assert "A aba PISOS veio sem a coluna de cimento." in email["corpo"]
-    assert f"usuario: {USUARIO}" in email["corpo"]        # quem relatou
+    assert f"login: {USUARIO}" in email["corpo"]
 
 
 def test_relato_leva_o_contexto_do_processamento(cliente, smtp):
@@ -453,3 +453,43 @@ def test_itens_lidos_sem_composicao_mantem_a_mensagem_antiga(cliente, monkeypatc
     corpo = _esperar(client, job_id)
     assert corpo["estado"] == "erro"
     assert "nenhum item dele encontrou composição na planilha-base" in corpo["erro"]
+
+
+def test_relato_leva_nome_e_email_de_quem_relatou(cliente, smtp):
+    """O login é um só para o escritório; quem relatou vem do formulário."""
+    client, _ = cliente
+    client.post("/relatar", data={
+        "descricao": "A coluna de cimento ficou vazia na aba MURO.",
+        "nome": "Luiz Gabriel",
+        "email": "luiz@construtec.com.br",
+    })
+    corpo = smtp[0]["corpo"]
+    assert "quem relatou: Luiz Gabriel" in corpo
+    assert "email: luiz@construtec.com.br" in corpo
+
+
+def test_identificacao_e_opcional(cliente, smtp):
+    """Quem não quiser se identificar continua conseguindo relatar."""
+    client, _ = cliente
+    resposta = client.post("/relatar", data={"descricao": "está errado"})
+    assert resposta.status_code == 200
+    assert "quem relatou" not in smtp[0]["corpo"]
+
+
+def test_email_informado_vira_reply_to(cliente, smtp, monkeypatch):
+    """Metade do uso é dúvida: o suporte responde com um clique."""
+    from webapp.relatos import montar_mensagem
+    for chave, valor in SMTP_ENV.items():
+        monkeypatch.setenv(chave, valor)
+    msg = montar_mensagem("dúvida", {"email": "luiz@construtec.com.br"})
+    assert msg["Reply-To"] == "luiz@construtec.com.br"
+    assert montar_mensagem("sem contato", {})["Reply-To"] is None
+
+
+def test_destino_padrao_e_a_caixa_de_suporte(cliente, monkeypatch, smtp):
+    """Sem ORCAUTO_EMAIL_SUPORTE, o relato ainda chega ao suporte."""
+    from webapp.relatos import SUPORTE_PADRAO
+    monkeypatch.delenv("ORCAUTO_EMAIL_SUPORTE", raising=False)
+    client, _ = cliente
+    assert client.post("/relatar", data={"descricao": "x"}).status_code == 200
+    assert smtp[0]["para"] == SUPORTE_PADRAO == "suportorcauto@gmail.com"

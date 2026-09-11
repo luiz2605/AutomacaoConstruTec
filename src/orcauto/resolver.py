@@ -134,7 +134,8 @@ class InputColumn:
 
 def topic_inputs(items, index, resolver: Resolver,
                  sections: tuple[str, ...] = (),
-                 expand_subservices: bool = True) -> list[InputColumn]:
+                 expand_subservices: bool = True,
+                 priority_units: tuple[str, ...] = ()) -> list[InputColumn]:
     """Insumos usados por um tópico inteiro, em ordem determinística.
 
     `expand_subservices=True` (padrão histórico) resolve recursivamente e só
@@ -171,11 +172,41 @@ def topic_inputs(items, index, resolver: Resolver,
                                             and index.get(code) is None))
             elif item.code not in existing.used_by:
                 existing.used_by.append(item.code)
-    if not sections:
-        return list(columns.values())
-    wanted = [normalize(s) for s in sections]
-    return [c for c in columns.values()
-            if c.section and any(normalize(c.section).startswith(w) for w in wanted)]
+    escolhidas = list(columns.values())
+    if sections:
+        wanted = [normalize(s) for s in sections]
+        escolhidas = [c for c in escolhidas
+                      if c.section and any(normalize(c.section).startswith(w) for w in wanted)]
+    return order_by_unit(escolhidas, priority_units)
+
+
+def order_by_unit(columns: list[InputColumn],
+                  priority: tuple[str, ...] = ()) -> list[InputColumn]:
+    """Agrupa as colunas por unidade, com as unidades prioritárias na frente.
+
+    A equipe usa as colunas em **H** (hora) para outras contas — mão de obra e
+    equipamento — e precisa delas à mão, não espalhadas entre trinta colunas de
+    material. Então elas vêm primeiro, e o resto fica agrupado por unidade, o
+    que também deixa junto o que se soma junto (M2 com M2, KG com KG).
+
+    A ordenação é estável: dentro de cada grupo continua valendo a ordem de
+    primeira aparição no orçamento, que é o que faz duas execuções sobre o
+    mesmo PDF gerarem a mesma aba.
+    """
+    prioritarias = [normalize(u) for u in priority]
+    primeira_vez: dict[str, int] = {}
+    for posicao, coluna in enumerate(columns):
+        primeira_vez.setdefault(normalize(coluna.unit), posicao)
+
+    def chave(coluna: InputColumn) -> tuple:
+        unidade = normalize(coluna.unit)
+        if unidade in prioritarias:
+            return (0, prioritarias.index(unidade))
+        if not unidade:                      # sem unidade declarada: por último
+            return (2, 0)
+        return (1, primeira_vez[unidade])
+
+    return sorted(columns, key=chave)
 
 
 def _input_catalog(index) -> dict[str, tuple[str, str | None, str | None]]:

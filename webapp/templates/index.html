@@ -55,7 +55,13 @@
   textarea{width:100%;margin-top:12px;padding:11px;border-radius:9px;resize:vertical;
            border:1px solid var(--linha);background:var(--fundo);color:var(--tinta);
            font:inherit;font-size:.92rem;min-height:104px}
-  textarea:focus{outline:2px solid var(--marca);outline-offset:-1px}
+  textarea:focus,input[type=text]:focus,input[type=email]:focus{
+        outline:2px solid var(--marca);outline-offset:-1px}
+  input[type=text],input[type=email]{width:100%;padding:10px 11px;border-radius:9px;
+        border:1px solid var(--linha);background:var(--fundo);color:var(--tinta);
+        font:inherit;font-size:.9rem}
+  .dupla{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .dupla>*{flex:1;min-width:180px}
 </style>
 </head>
 <body>
@@ -112,7 +118,13 @@
        de resultado quanto à de erro, sem duplicar marcação. -->
   <div id="relato" class="oculto">
     <textarea id="relato_texto"
-              placeholder="O que está errado? Se puder, diga em que aba e em que item você viu o problema."></textarea>
+              placeholder="O que está errado? Se puder, diga em que aba e em que item você viu o problema. Dúvidas também valem."></textarea>
+    <!-- O login é um só para o escritório inteiro, então ele não diz quem
+         relatou. Preenchimento livre: sem isto não há como responder. -->
+    <div class="dupla">
+      <input id="relato_nome" type="text" placeholder="Seu nome (opcional)">
+      <input id="relato_email" type="email" placeholder="Seu e-mail, para resposta (opcional)">
+    </div>
     <button id="relato_enviar" type="button">Enviar relato</button>
     <div id="relato_aviso"></div>
   </div>
@@ -229,6 +241,8 @@ if (form) {
       }
       const dados = new FormData();
       dados.append("descricao", texto.value);
+      if ($("relato_nome").value.trim()) dados.append("nome", $("relato_nome").value);
+      if ($("relato_email").value.trim()) dados.append("email", $("relato_email").value);
       // o job_id dá ao suporte o arquivo, o estado e o erro exato do
       // processamento — coisas que o funcionário não teria como digitar
       if (jobId) dados.append("job_id", jobId);
