@@ -493,3 +493,30 @@ def test_destino_padrao_e_a_caixa_de_suporte(cliente, monkeypatch, smtp):
     client, _ = cliente
     assert client.post("/relatar", data={"descricao": "x"}).status_code == 200
     assert smtp[0]["para"] == SUPORTE_PADRAO == "suportorcauto@gmail.com"
+
+
+def test_saude_informa_a_versao_no_ar(cliente_anonimo, monkeypatch):
+    """Conferir qual commit está rodando sem precisar ler a lista de deploys."""
+    client, _ = cliente_anonimo
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "35342f05c936f7dc82e6471bf17234895131c312")
+    corpo = client.get("/saude").json()
+    assert corpo["versao"] == "35342f0"
+    assert corpo["ok"] is True
+
+
+def test_saude_sem_variavel_de_versao_nao_quebra(cliente_anonimo, monkeypatch):
+    client, _ = cliente_anonimo
+    for nome in ("ORCAUTO_VERSAO", "RENDER_GIT_COMMIT", "SOURCE_VERSION"):
+        monkeypatch.delenv(nome, raising=False)
+    assert client.get("/saude").json()["versao"] == "desconhecida"
+
+
+def test_saude_diz_se_o_relato_esta_configurado(cliente_anonimo, monkeypatch):
+    """Assim dá para saber por que o link não aparece, sem abrir o código."""
+    client, _ = cliente_anonimo
+    for chave in SMTP_ENV:
+        monkeypatch.delenv(chave, raising=False)
+    assert client.get("/saude").json()["relato_configurado"] is False
+    for chave, valor in SMTP_ENV.items():
+        monkeypatch.setenv(chave, valor)
+    assert client.get("/saude").json()["relato_configurado"] is True

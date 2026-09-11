@@ -195,6 +195,20 @@ async def relatar(descricao: str = Form(""), job_id: str | None = Form(None),
     return JSONResponse({"ok": True})
 
 
+def versao_publicada() -> str:
+    """Commit que está rodando, para conferir sem adivinhar.
+
+    O Render exporta `RENDER_GIT_COMMIT` em toda build. Saber qual versão está
+    no ar, sem depender de ler a lista de deploys, é o que separa "o programa
+    está errado" de "o deploy não subiu" — dúvida que já custou caro.
+    """
+    for nome in ("ORCAUTO_VERSAO", "RENDER_GIT_COMMIT", "SOURCE_VERSION"):
+        commit = os.environ.get(nome)
+        if commit:
+            return commit[:7]
+    return "desconhecida"
+
+
 @app.get("/saude")
 def saude():
     """Sem autenticação de propósito: é o health check do Render e não
@@ -205,5 +219,7 @@ def saude():
     except Exception:
         base, pronto = None, False
     fila.limpar_expirados()
-    return {"ok": pronto, "planilha_base": str(base) if base else None,
+    return {"ok": pronto, "versao": versao_publicada(),
+            "relato_configurado": configurado(),
+            "planilha_base": str(base) if base else None,
             "trabalhos_ativos": len(fila)}

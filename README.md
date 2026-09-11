@@ -305,3 +305,22 @@ orçamento. Dentro de cada grupo vale a ordem de primeira aparição, que é o q
 faz duas execuções sobre o mesmo PDF gerarem exatamente a mesma aba.
 
 Configurável em `compositions.priority_units` (padrão `["H"]`).
+
+## Conferir qual versão está no ar
+
+`GET /saude` não pede login e devolve o commit que está rodando:
+
+```json
+{"ok": true, "versao": "35342f0", "relato_configurado": false,
+ "planilha_base": ".../PLANILHA_BASE.xlsx", "trabalhos_ativos": 0}
+```
+
+Basta abrir `https://SEU-SERVICO.onrender.com/saude` no navegador e comparar
+`versao` com o último commit da `main`. Serve para separar "o programa está
+errado" de "o deploy não subiu", que são problemas bem diferentes.
+
+`relato_configurado` diz se as variáveis de SMTP estão cadastradas — é a
+resposta para "por que o link de relatar problema não aparece".
+
+O commit vem de `RENDER_GIT_COMMIT`, exportado pelo Render em toda build;
+`ORCAUTO_VERSAO` tem precedência, para quem hospeda em outro lugar.
